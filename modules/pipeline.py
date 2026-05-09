@@ -20,6 +20,11 @@ from modules.review import (
     project_metadata,
     voice_report,
 )
+from modules.release_assets import (
+    render_amazon_research_brief,
+    render_competitor_template_csv,
+    render_kindle_preview_check,
+)
 from modules.rounds import make_round_id, snapshot_round
 from modules.run_logger import RunLogger
 
@@ -137,6 +142,9 @@ class PublisherPipeline:
             self.writer.write_json("industrial_qa_report.json", qa, project.project_id)
             self.writer.write_text("industrial_qa_report.md", render_industrial_qa_markdown(qa), project.project_id)
             self.writer.write_text("beginner_summary.md", render_beginner_summary(project, qa), project.project_id)
+            self.writer.write_text("kindle_preview_check.md", render_kindle_preview_check(project), project.project_id)
+            self.writer.write_text("amazon_research_brief.md", render_amazon_research_brief(project), project.project_id)
+            self.writer.write_text("competitor_research_template.csv", render_competitor_template_csv(), project.project_id)
             self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
             self.logger.log(
                 "industrial_qa_completed",
@@ -148,6 +156,9 @@ class PublisherPipeline:
             "industrial_qa_report.json",
             "industrial_qa_report.md",
             "beginner_summary.md",
+            "kindle_preview_check.md",
+            "amazon_research_brief.md",
+            "competitor_research_template.csv",
             "agent_memory_snapshot.json",
         ]:
             self._mirror_if_single(projects, filename)

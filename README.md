@@ -29,6 +29,12 @@ artifacts\rounds\<project_id>\round_YYYYMMDD_HHMMSS\
 Die schnelle Runde nutzt keine OpenAI API. Der Vollreview-Modus nutzt den konfigurierten OpenAI-Key.
 Die GUI zeigt zuerst `beginner_summary.md`: eine einfache Ampel mit den naechsten konkreten Schritten und der betroffenen Datei.
 
+Optional kann eine Desktop-Verknuepfung erstellt werden:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_windows_shortcut.ps1
+```
+
 ## What It Does
 
 - Scans the KDP endversion folder for book projects.
@@ -104,6 +110,9 @@ For one detected project, key files are mirrored directly into `artifacts/`:
 - `industrial_qa_report.md`
 - `industrial_qa_report.json`
 - `beginner_summary.md`
+- `kindle_preview_check.md`
+- `amazon_research_brief.md`
+- `competitor_research_template.csv`
 - `latest_round_summary.json`
 - `manuscript_review.md`
 - `manuscript_score.json`
@@ -145,6 +154,36 @@ The output decision is:
 - `GO`: ready for upload after normal human preview
 - `GO_AFTER_FIXES`: commercially usable after listed fixes
 - `HOLD`: blocking production issue
+
+## Amazon Research And Kindle Preview
+
+The agent does not scrape Amazon. It creates a manual research pack instead:
+
+- `amazon_research_brief.md`
+- `competitor_research_template.csv`
+
+This keeps the workflow robust and lets a non-technical user copy visible Amazon data into a simple table.
+
+The agent also writes:
+
+- `kindle_preview_check.md`
+
+It detects common Kindle Previewer install paths and lists the exact manual checks before upload.
+
+## Build Windows App
+
+For a distributable Windows folder app:
+
+```bat
+python -m pip install -r requirements-dev.txt
+scripts\build_windows_app.bat
+```
+
+Output:
+
+```text
+dist\BookPublisher\BookPublisher.exe
+```
 
 ## Skills And Memory
 

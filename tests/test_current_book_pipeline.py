@@ -100,6 +100,9 @@ def test_current_book_pipeline_with_fake_llm_builds_full_artifact_set():
         "industrial_qa_report.md",
         "industrial_qa_report.json",
         "beginner_summary.md",
+        "kindle_preview_check.md",
+        "amazon_research_brief.md",
+        "competitor_research_template.csv",
         "agent_memory_snapshot.json",
         "cover_review.md",
         "kdp_publish_checklist.md",
@@ -145,6 +148,9 @@ def test_current_book_industrial_qa_without_llm():
     assert "Industrial Publisher QA" in qa_md
     assert "Einfache Buch-Pruefung" in beginner_md
     assert "Naechster Klick" in beginner_md
+    assert (artifact_dir / "kindle_preview_check.md").exists()
+    assert (artifact_dir / "amazon_research_brief.md").exists()
+    assert "search_query" in (artifact_dir / "competitor_research_template.csv").read_text(encoding="utf-8")
 
 
 def test_current_book_quick_round_creates_snapshot_without_llm():
@@ -176,6 +182,9 @@ def test_current_book_quick_round_creates_snapshot_without_llm():
     assert summary["mode"] == "quick_qa"
     assert (round_dir / "industrial_qa_report.md").exists()
     assert (round_dir / "beginner_summary.md").exists()
+    assert (round_dir / "kindle_preview_check.md").exists()
+    assert (round_dir / "amazon_research_brief.md").exists()
+    assert (round_dir / "competitor_research_template.csv").exists()
     assert (round_dir / "cover_review.md").exists()
     assert (round_dir / "agent_memory_snapshot.json").exists()
     assert not (round_dir / "manuscript_review.md").exists()

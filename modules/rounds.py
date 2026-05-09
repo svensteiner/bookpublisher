@@ -14,6 +14,9 @@ QUICK_ROUND_ARTIFACTS = [
     "beginner_summary.md",
     "industrial_qa_report.md",
     "industrial_qa_report.json",
+    "kindle_preview_check.md",
+    "amazon_research_brief.md",
+    "competitor_research_template.csv",
     "cover_review.md",
     "agent_memory_snapshot.json",
 ]
