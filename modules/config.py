@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+from dotenv import load_dotenv
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+
+
+class ConfigError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    project_root: Path
+    default_input_path: Path
+    default_model: str
+    fallback_model: str
+    temperature: float = 0.2
+    max_manuscript_chars: int = 60000
+    read_only: bool = True
+    artifact_mirror_single_project: bool = True
+    skip_directories: set[str] = field(default_factory=set)
+    supplemental_text_directories: set[str] = field(default_factory=set)
+    supported_files: dict[str, list[str]] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+def load_config(config_path: Path | None = None) -> AppConfig:
+    path = config_path or DEFAULT_CONFIG_PATH
+    if not path.exists():
+        raise ConfigError(f"Config file not found: {path}")
+
+    load_dotenv(PROJECT_ROOT / ".env")
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    required = ["default_input_path", "default_model", "fallback_model"]
+    missing = [key for key in required if not data.get(key)]
+    if missing:
+        raise ConfigError(f"Missing required config values: {', '.join(missing)}")
+
+    skip = {str(item).lower() for item in data.get("skip_directories", [])}
+    supplemental = {str(item).lower() for item in data.get("supplemental_text_directories", [])}
+    supported = data.get("supported_files", {}) or {}
+    normalized_supported = {
+        key: [ext.lower() for ext in value]
+        for key, value in supported.items()
+    }
+
+    return AppConfig(
+        project_root=PROJECT_ROOT,
+        default_input_path=Path(data["default_input_path"]),
+        default_model=str(data["default_model"]),
+        fallback_model=str(data["fallback_model"]),
+        temperature=float(data.get("temperature", 0.2)),
+        max_manuscript_chars=int(data.get("max_manuscript_chars", 60000)),
+        read_only=bool(data.get("read_only", True)),
+        artifact_mirror_single_project=bool(data.get("artifact_mirror_single_project", True)),
+        skip_directories=skip,
+        supplemental_text_directories=supplemental,
+        supported_files=normalized_supported,
+        raw=data,
+    )

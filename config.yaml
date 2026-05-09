@@ -1,0 +1,43 @@
+agent_name: bookpublisher
+agent_version: 1.0.0
+
+default_input_path: "C:\\Users\\svens\\OneDrive\\Desktop\\Buch für Amazon\\AI_Studioxyz_KDP\\endversion"
+
+default_model: gpt-4.1
+fallback_model: gpt-4.1-mini
+temperature: 0.2
+max_manuscript_chars: 60000
+
+read_only: true
+artifact_mirror_single_project: true
+
+skip_directories:
+  - artifacts
+  - logs
+  - tests
+  - __pycache__
+  - .git
+  - .venv
+  - venv
+  - nicht_hochladen
+  - redaktion
+  - kundenausgabe
+
+supplemental_text_directories:
+  - nicht_hochladen
+  - redaktion
+
+supported_files:
+  manuscripts:
+    - .docx
+  text:
+    - .md
+    - .txt
+  pdf:
+    - .pdf
+  covers:
+    - .png
+    - .jpg
+    - .jpeg
+  archives:
+    - .zip
