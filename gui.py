@@ -140,9 +140,12 @@ class PublisherGui(tk.Tk):
         round_id = summary["round_id"]
         round_dir = artifact_dir / "rounds" / project_id / round_id
         self.last_report_dir = round_dir
-        preferred = round_dir / "industrial_qa_report.md"
+        preferred = round_dir / "beginner_summary.md"
         if preferred.exists():
             return preferred
+        fallback = round_dir / "industrial_qa_report.md"
+        if fallback.exists():
+            return fallback
         fallback = round_dir / "final_publisher_summary.md"
         return fallback if fallback.exists() else None
 

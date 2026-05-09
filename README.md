@@ -27,6 +27,7 @@ artifacts\rounds\<project_id>\round_YYYYMMDD_HHMMSS\
 ```
 
 Die schnelle Runde nutzt keine OpenAI API. Der Vollreview-Modus nutzt den konfigurierten OpenAI-Key.
+Die GUI zeigt zuerst `beginner_summary.md`: eine einfache Ampel mit den naechsten konkreten Schritten und der betroffenen Datei.
 
 ## What It Does
 
@@ -102,6 +103,7 @@ For one detected project, key files are mirrored directly into `artifacts/`:
 - `discovery_report.json`
 - `industrial_qa_report.md`
 - `industrial_qa_report.json`
+- `beginner_summary.md`
 - `latest_round_summary.json`
 - `manuscript_review.md`
 - `manuscript_score.json`

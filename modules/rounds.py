@@ -11,6 +11,7 @@ from modules.discovery import BookProject
 
 
 QUICK_ROUND_ARTIFACTS = [
+    "beginner_summary.md",
     "industrial_qa_report.md",
     "industrial_qa_report.json",
     "cover_review.md",

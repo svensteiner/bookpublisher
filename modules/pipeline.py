@@ -8,7 +8,7 @@ from modules.artifacts import ArtifactWriter
 from modules.config import AppConfig
 from modules.cover import render_cover_review
 from modules.discovery import BookProject, discover_books, render_discovery_markdown
-from modules.industrial import build_industrial_qa, render_industrial_qa_markdown
+from modules.industrial import build_industrial_qa, render_beginner_summary, render_industrial_qa_markdown
 from modules.llm import LLMClient
 from modules.review import (
     amazon_review,
@@ -136,6 +136,7 @@ class PublisherPipeline:
             self.memory.save()
             self.writer.write_json("industrial_qa_report.json", qa, project.project_id)
             self.writer.write_text("industrial_qa_report.md", render_industrial_qa_markdown(qa), project.project_id)
+            self.writer.write_text("beginner_summary.md", render_beginner_summary(project, qa), project.project_id)
             self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
             self.logger.log(
                 "industrial_qa_completed",
@@ -143,7 +144,12 @@ class PublisherPipeline:
                 decision=qa["decision"],
                 industrial_score=qa["industrial_score"],
             )
-        for filename in ["industrial_qa_report.json", "industrial_qa_report.md", "agent_memory_snapshot.json"]:
+        for filename in [
+            "industrial_qa_report.json",
+            "industrial_qa_report.md",
+            "beginner_summary.md",
+            "agent_memory_snapshot.json",
+        ]:
             self._mirror_if_single(projects, filename)
         return projects
 

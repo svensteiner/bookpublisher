@@ -384,6 +384,124 @@ def build_industrial_qa(project: BookProject, agent_context: dict[str, Any] | No
     }
 
 
+def _gate_lookup(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {gate["name"]: gate for gate in report.get("gates", [])}
+
+
+def _traffic_light(decision: str) -> tuple[str, str]:
+    if decision == "GO":
+        return "GRUEN", "Du kannst nach einer normalen Sichtpruefung hochladen."
+    if decision == "GO_AFTER_FIXES":
+        return "GELB", "Das Buch ist stark, aber vor dem Upload bleiben einzelne Kontrollpunkte."
+    return "ROT", "Nicht hochladen. Es gibt blockierende Punkte."
+
+
+def _affected_file_for_fix(fix: str) -> str:
+    lower = fix.lower()
+    if "cover" in lower or "thumbnail" in lower or "background" in lower:
+        return "Cover-Datei"
+    if "description" in lower or "keyword" in lower or "category" in lower or "title" in lower or "subtitle" in lower:
+        return "Amazon_Beschreibung_und_Metadaten.md"
+    if "docx" in lower or "kindle" in lower or "paragraph" in lower or "toc" in lower or "sample" in lower or "ebook" in lower:
+        return "DOCX-Manuskript"
+    if "pdf" in lower or "proof" in lower:
+        return "Proof-PDF"
+    return "Buchordner"
+
+
+def _plain_fix(fix: str) -> str:
+    lower = fix.lower()
+    if "enough perceived value" in lower:
+        return "Pruefe, ob das Buch fuer den geplanten Preis genug wahrgenommenen Wert bietet. Bei rund 9.000 Woertern sollte der Nutzen sehr klar sein."
+    if "edge visibility" in lower:
+        return "Pruefe, ob das Cover auf weissem Amazon-Hintergrund noch klar abgegrenzt ist."
+    if "kindle previewer" in lower:
+        return "Oeffne die Datei in der Kindle-Vorschau und pruefe Handy-, Tablet- und Kindle-Ansicht."
+    if "clickable kindle toc" in lower or "toc" in lower:
+        return "Pruefe, ob das Inhaltsverzeichnis in Kindle klickbar ist."
+    if "amazon description" in lower:
+        return "Passe die Amazon-Beschreibung an, damit Nutzen und Zielgruppe sofort klar sind."
+    if "keyword" in lower:
+        return "Ergaenze mindestens sieben passende Amazon-Suchbegriffe."
+    if "category" in lower:
+        return "Lege passende Amazon-Kategorien fest."
+    if "paragraph" in lower:
+        return "Kuerze zu lange Absaetze, damit das Buch am Handy leichter lesbar ist."
+    if "cover" in lower:
+        return "Pruefe oder ersetze die Cover-Datei."
+    return fix
+
+
+def render_beginner_summary(project: BookProject, report: dict[str, Any]) -> str:
+    decision = str(report.get("decision", "HOLD"))
+    light, plain_decision = _traffic_light(decision)
+    gates = _gate_lookup(report)
+    profile = report.get("docx_profile", {})
+    fixes = report.get("all_required_fixes", [])
+
+    lines = [
+        "# Einfache Buch-Pruefung",
+        "",
+        f"Buch: **{project.title or project.project_id}**",
+        f"Ampel: **{light}**",
+        f"Ergebnis: {plain_decision}",
+        f"Score: **{report.get('industrial_score', 'n/a')}/100**",
+        "",
+        "## Was ist schon gut?",
+        "",
+    ]
+
+    positives: list[str] = []
+    if gates.get("asset_completeness", {}).get("status") == "READY":
+        positives.append("Alle wichtigen Dateien sind da: Manuskript, Cover, Titel, Autor und Amazon-Beschreibung.")
+    if gates.get("metadata_and_storefront", {}).get("status") == "READY":
+        positives.append("Die Amazon-Seite ist grundsaetzlich vorbereitet: Beschreibung, Keywords und Kategorien sind vorhanden.")
+    if gates.get("amazon_sellability", {}).get("status") == "READY":
+        positives.append("Das Buch hat eine klare Zielgruppe, konkrete Beweise und eine verkaufbare Positionierung.")
+    if gates.get("production_package", {}).get("score", 0) >= 85:
+        positives.append("Cover-Format und Produktionspaket sehen technisch gut aus.")
+    if profile.get("heading_count", 0) >= 8:
+        positives.append("Das Manuskript hat genug Ueberschriften fuer Kindle-Navigation und Lesbarkeit.")
+
+    lines.extend(f"- {item}" for item in positives or ["Die Grundstruktur wurde erkannt und kann geprueft werden."])
+
+    lines.extend(["", "## Was musst du jetzt tun?", ""])
+    if fixes:
+        for idx, fix in enumerate(fixes, start=1):
+            lines.extend([
+                f"{idx}. {_plain_fix(fix)}",
+                f"   Betroffene Datei: **{_affected_file_for_fix(fix)}**",
+            ])
+    else:
+        lines.append("Nichts Blockierendes. Mache nur noch eine menschliche Endkontrolle.")
+
+    lines.extend([
+        "",
+        "## Was bedeutet das praktisch?",
+        "",
+    ])
+    if decision == "GO":
+        lines.append("Du kannst den KDP-Upload vorbereiten. Pruefe trotzdem einmal die Kindle-Vorschau und die Amazon-Produktseite.")
+    elif decision == "GO_AFTER_FIXES":
+        lines.append("Du bist nah an der Veroeffentlichung. Arbeite die Punkte oben ab, speichere die Dateien, und starte danach die naechste Pruefrunde.")
+    else:
+        lines.append("Bitte zuerst die fehlenden oder blockierenden Dateien korrigieren. Danach eine neue Pruefrunde starten.")
+
+    lines.extend([
+        "",
+        "## Erkannte Dateien",
+        "",
+        f"- Manuskript: `{project.manuscript or 'FEHLT'}`",
+        f"- Cover: `{project.cover or 'FEHLT'}`",
+        f"- Metadaten-Dateien: {len(project.metadata_files)}",
+        "",
+        "## Naechster Klick",
+        "",
+        "Nach deinen Anpassungen wieder **Pruefrunde starten** klicken.",
+    ])
+    return "\n".join(lines)
+
+
 def render_industrial_qa_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# Industrial Publisher QA",
