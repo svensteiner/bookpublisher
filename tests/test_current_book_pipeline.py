@@ -97,6 +97,8 @@ def test_current_book_pipeline_with_fake_llm_builds_full_artifact_set():
         "voice_preservation_report.md",
         "amazon_conversion_review.md",
         "publisher_board_review.md",
+        "industrial_qa_report.md",
+        "industrial_qa_report.json",
         "cover_review.md",
         "kdp_publish_checklist.md",
         "launch_content.md",
@@ -104,3 +106,36 @@ def test_current_book_pipeline_with_fake_llm_builds_full_artifact_set():
     }
     assert expected.issubset({path.name for path in artifact_dir.iterdir()})
     assert "Kindle" in (artifact_dir / "publisher_board_review.md").read_text(encoding="utf-8")
+
+
+def test_current_book_industrial_qa_without_llm():
+    if not CURRENT_BOOK_PATH.exists():
+        pytest.skip(f"Current book folder not available: {CURRENT_BOOK_PATH}")
+
+    workspace = runtime_dir("current_book_qa")
+    config = AppConfig(
+        project_root=workspace,
+        default_input_path=CURRENT_BOOK_PATH,
+        default_model="fake",
+        fallback_model="fake",
+        skip_directories={"nicht_hochladen", "redaktion", "kundenausgabe"},
+        supplemental_text_directories={"nicht_hochladen", "redaktion"},
+        supported_files={
+            "manuscripts": [".docx"],
+            "text": [".md", ".txt"],
+            "pdf": [".pdf"],
+            "covers": [".png", ".jpg", ".jpeg"],
+            "archives": [".zip"],
+        },
+    )
+    pipeline = PublisherPipeline(config, RunLogger(workspace / "logs"))
+
+    projects = pipeline.run_qa(CURRENT_BOOK_PATH)
+
+    artifact_dir = workspace / "artifacts" / projects[0].project_id
+    qa_json = (artifact_dir / "industrial_qa_report.json").read_text(encoding="utf-8")
+    qa_md = (artifact_dir / "industrial_qa_report.md").read_text(encoding="utf-8")
+
+    assert "industrial_score" in qa_json
+    assert "kindle_ebook_readiness" in qa_json
+    assert "Industrial Publisher QA" in qa_md

@@ -7,6 +7,7 @@ from modules.artifacts import ArtifactWriter
 from modules.config import AppConfig
 from modules.cover import render_cover_review
 from modules.discovery import BookProject, discover_books, render_discovery_markdown
+from modules.industrial import build_industrial_qa, render_industrial_qa_markdown
 from modules.llm import LLMClient
 from modules.review import (
     amazon_review,
@@ -105,6 +106,23 @@ class PublisherPipeline:
         self._mirror_if_single(projects, "cover_review.md")
         return projects
 
+    def run_qa(self, input_path: Path) -> list[BookProject]:
+        projects = self.discover(input_path)
+        for project in projects:
+            self.logger.log("stage_started", project_id=project.project_id, stage="industrial_qa")
+            qa = build_industrial_qa(project)
+            self.writer.write_json("industrial_qa_report.json", qa, project.project_id)
+            self.writer.write_text("industrial_qa_report.md", render_industrial_qa_markdown(qa), project.project_id)
+            self.logger.log(
+                "industrial_qa_completed",
+                project_id=project.project_id,
+                decision=qa["decision"],
+                industrial_score=qa["industrial_score"],
+            )
+        for filename in ["industrial_qa_report.json", "industrial_qa_report.md"]:
+            self._mirror_if_single(projects, filename)
+        return projects
+
     def run_launch(self, input_path: Path) -> list[BookProject]:
         projects = self.discover(input_path)
         if not projects:
@@ -118,6 +136,7 @@ class PublisherPipeline:
         return projects
 
     def run_all(self, input_path: Path) -> list[BookProject]:
+        self.run_qa(input_path)
         projects = self.run_review(input_path)
         if not projects:
             return projects
@@ -132,6 +151,7 @@ class PublisherPipeline:
                 "voice_preservation_report.md",
                 "amazon_conversion_review.md",
                 "publisher_board_review.md",
+                "industrial_qa_report.md",
                 "cover_review.md",
                 "kdp_publish_checklist.md",
                 "launch_content.md",

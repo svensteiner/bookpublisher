@@ -11,6 +11,7 @@ The agent prepares, reviews, scores, documents, and packages publishing assets. 
 - Reviews manuscript strength, Amazon conversion, voice preservation, cover readiness, and launch readiness.
 - Runs a major-publisher style editorial board review across acquisition, developmental editing, line quality, production, Kindle ebook mechanics, metadata, sales, and launch.
 - Checks Kindle sellability: first 10% sample strength, Look Inside flow, reflow-friendly structure, clickable TOC expectations, mobile readability, keywords/categories, and post-purchase review risk.
+- Adds an industrial QA gate that runs without LLM calls and produces release decisions, machine-readable scores, and blocking fixes.
 - Generates German launch assets in the author's voice.
 - Writes all outputs only to `artifacts/`.
 - Logs every run to `logs/run_YYYYMMDD_HHMMSS.jsonl`.
@@ -41,6 +42,7 @@ Commands:
 
 ```bat
 cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py scan
+cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py qa
 cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py review
 cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py cover
 cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py launch
@@ -65,6 +67,8 @@ For one detected project, key files are mirrored directly into `artifacts/`:
 
 - `discovery_report.md`
 - `discovery_report.json`
+- `industrial_qa_report.md`
+- `industrial_qa_report.json`
 - `manuscript_review.md`
 - `manuscript_score.json`
 - `voice_preservation_report.md`
@@ -89,6 +93,22 @@ Default mode is read-only analysis. The agent writes only to:
 - `logs/`
 
 It does not modify manuscripts, covers, metadata, or source files.
+
+## Industrial QA
+
+`python main.py qa` is the production gate. It does not call the OpenAI API. It checks:
+
+- required production assets
+- Amazon metadata and storefront readiness
+- Kindle ebook mechanics: reflow, headings, first 10%, tables, images, TOC signal
+- cover production size, ratio, thumbnail contrast, and edge risk
+- sellability markers: target reader, proof, anti-hype positioning, practical payoff
+
+The output decision is:
+
+- `GO`: ready for upload after normal human preview
+- `GO_AFTER_FIXES`: commercially usable after listed fixes
+- `HOLD`: blocking production issue
 
 ## Tests
 

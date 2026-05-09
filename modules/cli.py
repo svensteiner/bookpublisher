@@ -11,7 +11,7 @@ from modules.run_logger import RunLogger
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Publisher Agent for Amazon KDP nonfiction books.")
-    parser.add_argument("command", choices=["scan", "review", "cover", "launch", "all"])
+    parser.add_argument("command", choices=["scan", "qa", "review", "cover", "launch", "all"])
     parser.add_argument("--input-path", type=Path, default=None)
     parser.add_argument("--config", type=Path, default=None)
     return parser
@@ -30,6 +30,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "scan":
             projects = pipeline.discover(input_path)
+        elif args.command == "qa":
+            projects = pipeline.run_qa(input_path)
         elif args.command == "review":
             projects = pipeline.run_review(input_path)
         elif args.command == "cover":
