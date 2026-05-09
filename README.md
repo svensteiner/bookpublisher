@@ -4,6 +4,30 @@ Production-oriented Publisher Agent for German Amazon KDP nonfiction business bo
 
 The agent prepares, reviews, scores, documents, and packages publishing assets. It never publishes, uploads, deletes, emails, or posts anything.
 
+## Fuer Nicht-Technische Nutzer
+
+On Windows, double-click:
+
+```text
+BookPublisher starten.bat
+```
+
+Dann:
+
+1. Buchordner mit DOCX-Manuskript, Cover und Metadaten auswaehlen.
+2. Schnelle Pruefrunde starten.
+3. FIX/REVIEW-Punkte im Fenster lesen.
+4. Buchdateien im Ordner anpassen.
+5. Naechste Pruefrunde starten.
+
+Jede Runde wird hier archiviert:
+
+```text
+artifacts\rounds\<project_id>\round_YYYYMMDD_HHMMSS\
+```
+
+Die schnelle Runde nutzt keine OpenAI API. Der Vollreview-Modus nutzt den konfigurierten OpenAI-Key.
+
 ## What It Does
 
 - Scans the KDP endversion folder for book projects.
@@ -43,6 +67,7 @@ Commands:
 ```bat
 cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py scan
 cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py qa
+cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py round
 cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py review
 cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py cover
 cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py launch
@@ -53,6 +78,12 @@ Override input path:
 
 ```bat
 cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py all --input-path "C:\Path\To\Another\BookFolder"
+```
+
+Full review round with OpenAI:
+
+```bat
+cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py round --full-review
 ```
 
 ## Outputs
@@ -69,6 +100,7 @@ For one detected project, key files are mirrored directly into `artifacts/`:
 - `discovery_report.json`
 - `industrial_qa_report.md`
 - `industrial_qa_report.json`
+- `latest_round_summary.json`
 - `manuscript_review.md`
 - `manuscript_score.json`
 - `voice_preservation_report.md`

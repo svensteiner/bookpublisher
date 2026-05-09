@@ -139,3 +139,36 @@ def test_current_book_industrial_qa_without_llm():
     assert "industrial_score" in qa_json
     assert "kindle_ebook_readiness" in qa_json
     assert "Industrial Publisher QA" in qa_md
+
+
+def test_current_book_quick_round_creates_snapshot_without_llm():
+    if not CURRENT_BOOK_PATH.exists():
+        pytest.skip(f"Current book folder not available: {CURRENT_BOOK_PATH}")
+
+    workspace = runtime_dir("current_book_round")
+    config = AppConfig(
+        project_root=workspace,
+        default_input_path=CURRENT_BOOK_PATH,
+        default_model="fake",
+        fallback_model="fake",
+        skip_directories={"nicht_hochladen", "redaktion", "kundenausgabe"},
+        supplemental_text_directories={"nicht_hochladen", "redaktion"},
+        supported_files={
+            "manuscripts": [".docx"],
+            "text": [".md", ".txt"],
+            "pdf": [".pdf"],
+            "covers": [".png", ".jpg", ".jpeg"],
+            "archives": [".zip"],
+        },
+    )
+    pipeline = PublisherPipeline(config, RunLogger(workspace / "logs"))
+
+    summary = pipeline.run_round(CURRENT_BOOK_PATH)
+
+    project_id = summary["projects"][0]["project_id"]
+    round_dir = workspace / "artifacts" / "rounds" / project_id / summary["round_id"]
+    assert summary["mode"] == "quick_qa"
+    assert (round_dir / "industrial_qa_report.md").exists()
+    assert (round_dir / "cover_review.md").exists()
+    assert not (round_dir / "manuscript_review.md").exists()
+    assert (workspace / "artifacts" / "latest_round_summary.json").exists()

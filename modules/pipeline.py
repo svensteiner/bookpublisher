@@ -19,6 +19,7 @@ from modules.review import (
     project_metadata,
     voice_report,
 )
+from modules.rounds import make_round_id, snapshot_round
 from modules.run_logger import RunLogger
 
 
@@ -134,6 +135,23 @@ class PublisherPipeline:
             self.writer.write_text("launch_content.md", launch_md, project.project_id)
         self._mirror_if_single(projects, "launch_content.md")
         return projects
+
+    def run_round(self, input_path: Path, full_review: bool = False) -> dict:
+        round_id = make_round_id()
+        mode = "full_review" if full_review else "quick_qa"
+        self.logger.log("round_started", round_id=round_id, mode=mode, input_path=str(input_path))
+
+        if full_review:
+            projects = self.run_all(input_path)
+        else:
+            projects = self.run_qa(input_path)
+            if projects:
+                self.run_cover(input_path)
+
+        summary = snapshot_round(self.writer.artifact_dir, projects, round_id, mode)
+        self.writer.write_json("latest_round_summary.json", summary)
+        self.logger.log("round_completed", round_id=round_id, mode=mode, project_count=len(projects))
+        return summary
 
     def run_all(self, input_path: Path) -> list[BookProject]:
         self.run_qa(input_path)
