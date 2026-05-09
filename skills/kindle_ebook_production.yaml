@@ -1,0 +1,12 @@
+name: kindle_ebook_production
+purpose: Checks whether the book works as a Kindle ebook, not only as a manuscript.
+checks:
+  - first 10 percent sample strength
+  - reflow-friendly paragraphs and headings
+  - clickable TOC expectations
+  - tables, images, and mobile readability
+  - cover thumbnail and white-background edge risk
+heuristics:
+  - Kindle buyers decide through thumbnail, title, description, sample, then trust
+  - short paragraphs and clear headings reduce mobile reading friction
+  - a ready manuscript still needs Kindle Previewer QA

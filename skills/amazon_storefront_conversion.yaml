@@ -1,0 +1,12 @@
+name: amazon_storefront_conversion
+purpose: Improves the Amazon product page so strangers understand why to buy.
+checks:
+  - title and subtitle scan value
+  - first three description lines
+  - bullets, keywords, and category hypotheses
+  - proof points and anti-hype positioning
+  - mismatch between promise and manuscript delivery
+heuristics:
+  - the first visible lines must sell the exact practical promise
+  - keywords should describe buyer intent, not author pride
+  - avoid hype that increases refund and review risk

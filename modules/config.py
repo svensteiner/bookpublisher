@@ -28,6 +28,8 @@ class AppConfig:
     artifact_mirror_single_project: bool = True
     skip_directories: set[str] = field(default_factory=set)
     supplemental_text_directories: set[str] = field(default_factory=set)
+    skills_directory: Path = Path("skills")
+    memory_path: Path = Path("artifacts/agent_memory.json")
     supported_files: dict[str, list[str]] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -64,6 +66,8 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         artifact_mirror_single_project=bool(data.get("artifact_mirror_single_project", True)),
         skip_directories=skip,
         supplemental_text_directories=supplemental,
+        skills_directory=Path(data.get("skills_directory", "skills")),
+        memory_path=Path(data.get("memory_path", "artifacts/agent_memory.json")),
         supported_files=normalized_supported,
         raw=data,
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from modules.agent_core import AgentMemory, SkillRegistry
 from modules.artifacts import ArtifactWriter
 from modules.config import AppConfig
 from modules.cover import render_cover_review
@@ -29,6 +30,14 @@ class PublisherPipeline:
         self.logger = logger
         self.writer = ArtifactWriter(config.project_root / "artifacts", logger)
         self.llm = LLMClient(config, logger)
+        skills_dir = config.skills_directory
+        if not skills_dir.is_absolute():
+            skills_dir = config.project_root / skills_dir
+        memory_path = config.memory_path
+        if not memory_path.is_absolute():
+            memory_path = config.project_root / memory_path
+        self.skills = SkillRegistry(skills_dir)
+        self.memory = AgentMemory(memory_path)
 
     def discover(self, input_path: Path) -> list[BookProject]:
         projects = discover_books(
@@ -47,6 +56,9 @@ class PublisherPipeline:
             "project_count": len(projects),
             "projects": [project.to_json() for project in projects],
         })
+        for project in projects:
+            self.memory.remember_project(project)
+        self.memory.save()
         return projects
 
     def _mirror_if_single(self, projects: list[BookProject], filename: str) -> None:
@@ -59,6 +71,10 @@ class PublisherPipeline:
             return projects
         self.llm.require_api_key()
         for project in projects:
+            agent_context = "\n\n".join([
+                self.skills.prompt_context(),
+                self.memory.prompt_context(project.project_id),
+            ])
             self.logger.log("stage_started", project_id=project.project_id, stage="manuscript_review")
             review_md, score_json = manuscript_review(project, self.config, self.llm)
             self.writer.write_text("manuscript_review.md", review_md, project.project_id)
@@ -72,7 +88,7 @@ class PublisherPipeline:
             amazon_md = amazon_review(project, self.config, self.llm)
             self.writer.write_text("amazon_conversion_review.md", amazon_md, project.project_id)
 
-            context = "\n\n".join([project_metadata(project), review_md, voice_md, amazon_md])
+            context = "\n\n".join([agent_context, project_metadata(project), review_md, voice_md, amazon_md])
             self.logger.log("stage_started", project_id=project.project_id, stage="publisher_board_review")
             board_md = publisher_board_review(project, context, self.llm)
             self.writer.write_text("publisher_board_review.md", board_md, project.project_id)
@@ -107,20 +123,27 @@ class PublisherPipeline:
         self._mirror_if_single(projects, "cover_review.md")
         return projects
 
-    def run_qa(self, input_path: Path) -> list[BookProject]:
+    def run_qa(self, input_path: Path, round_id: str | None = None) -> list[BookProject]:
         projects = self.discover(input_path)
         for project in projects:
             self.logger.log("stage_started", project_id=project.project_id, stage="industrial_qa")
-            qa = build_industrial_qa(project)
+            agent_context = {
+                "skills": self.skills.to_json(),
+                "memory": self.memory.snapshot(project.project_id),
+            }
+            qa = build_industrial_qa(project, agent_context)
+            self.memory.remember_qa(project, qa, round_id=round_id)
+            self.memory.save()
             self.writer.write_json("industrial_qa_report.json", qa, project.project_id)
             self.writer.write_text("industrial_qa_report.md", render_industrial_qa_markdown(qa), project.project_id)
+            self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
             self.logger.log(
                 "industrial_qa_completed",
                 project_id=project.project_id,
                 decision=qa["decision"],
                 industrial_score=qa["industrial_score"],
             )
-        for filename in ["industrial_qa_report.json", "industrial_qa_report.md"]:
+        for filename in ["industrial_qa_report.json", "industrial_qa_report.md", "agent_memory_snapshot.json"]:
             self._mirror_if_single(projects, filename)
         return projects
 
@@ -142,9 +165,9 @@ class PublisherPipeline:
         self.logger.log("round_started", round_id=round_id, mode=mode, input_path=str(input_path))
 
         if full_review:
-            projects = self.run_all(input_path)
+            projects = self.run_all(input_path, round_id=round_id)
         else:
-            projects = self.run_qa(input_path)
+            projects = self.run_qa(input_path, round_id=round_id)
             if projects:
                 self.run_cover(input_path)
 
@@ -153,8 +176,8 @@ class PublisherPipeline:
         self.logger.log("round_completed", round_id=round_id, mode=mode, project_count=len(projects))
         return summary
 
-    def run_all(self, input_path: Path) -> list[BookProject]:
-        self.run_qa(input_path)
+    def run_all(self, input_path: Path, round_id: str | None = None) -> list[BookProject]:
+        self.run_qa(input_path, round_id=round_id)
         projects = self.run_review(input_path)
         if not projects:
             return projects

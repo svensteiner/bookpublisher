@@ -10,6 +10,8 @@ max_manuscript_chars: 60000
 
 read_only: true
 artifact_mirror_single_project: true
+skills_directory: skills
+memory_path: artifacts/agent_memory.json
 
 skip_directories:
   - artifacts

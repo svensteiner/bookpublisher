@@ -99,6 +99,7 @@ def test_current_book_pipeline_with_fake_llm_builds_full_artifact_set():
         "publisher_board_review.md",
         "industrial_qa_report.md",
         "industrial_qa_report.json",
+        "agent_memory_snapshot.json",
         "cover_review.md",
         "kdp_publish_checklist.md",
         "launch_content.md",
@@ -138,6 +139,7 @@ def test_current_book_industrial_qa_without_llm():
 
     assert "industrial_score" in qa_json
     assert "kindle_ebook_readiness" in qa_json
+    assert "agent_context" in qa_json
     assert "Industrial Publisher QA" in qa_md
 
 
@@ -170,5 +172,6 @@ def test_current_book_quick_round_creates_snapshot_without_llm():
     assert summary["mode"] == "quick_qa"
     assert (round_dir / "industrial_qa_report.md").exists()
     assert (round_dir / "cover_review.md").exists()
+    assert (round_dir / "agent_memory_snapshot.json").exists()
     assert not (round_dir / "manuscript_review.md").exists()
     assert (workspace / "artifacts" / "latest_round_summary.json").exists()

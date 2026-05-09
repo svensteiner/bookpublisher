@@ -1,0 +1,12 @@
+name: voice_preservation
+purpose: Preserves the author's practical Austrian CFO/operator field-note voice.
+checks:
+  - anti-hype tone
+  - concrete numbers and operating examples
+  - generic AI phrasing
+  - consultant language and motivational filler
+  - over-polished passages
+heuristics:
+  - rough specificity is better than smooth generic prose
+  - do not add emotional drama that the author would not write
+  - keep practical skepticism visible in marketing and manuscript fixes

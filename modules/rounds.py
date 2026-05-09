@@ -14,6 +14,7 @@ QUICK_ROUND_ARTIFACTS = [
     "industrial_qa_report.md",
     "industrial_qa_report.json",
     "cover_review.md",
+    "agent_memory_snapshot.json",
 ]
 
 FULL_ROUND_ARTIFACTS = [

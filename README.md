@@ -36,6 +36,8 @@ Die schnelle Runde nutzt keine OpenAI API. Der Vollreview-Modus nutzt den konfig
 - Runs a major-publisher style editorial board review across acquisition, developmental editing, line quality, production, Kindle ebook mechanics, metadata, sales, and launch.
 - Checks Kindle sellability: first 10% sample strength, Look Inside flow, reflow-friendly structure, clickable TOC expectations, mobile readability, keywords/categories, and post-purchase review risk.
 - Adds an industrial QA gate that runs without LLM calls and produces release decisions, machine-readable scores, and blocking fixes.
+- Loads modular publishing skills from `skills/`.
+- Maintains persistent agent memory in `artifacts/agent_memory.json` and snapshots it per review round.
 - Generates German launch assets in the author's voice.
 - Writes all outputs only to `artifacts/`.
 - Logs every run to `logs/run_YYYYMMDD_HHMMSS.jsonl`.
@@ -141,6 +143,27 @@ The output decision is:
 - `GO`: ready for upload after normal human preview
 - `GO_AFTER_FIXES`: commercially usable after listed fixes
 - `HOLD`: blocking production issue
+
+## Skills And Memory
+
+The agent now follows a template-style structure:
+
+- `skills/major_publisher_board.yaml`
+- `skills/kindle_ebook_production.yaml`
+- `skills/amazon_storefront_conversion.yaml`
+- `skills/voice_preservation.yaml`
+
+These skills are loaded at runtime and included in QA/review context. The persistent memory file is:
+
+```text
+artifacts\agent_memory.json
+```
+
+It remembers project facts, previous QA decisions, scores, and open risks. Each round also writes:
+
+```text
+agent_memory_snapshot.json
+```
 
 ## Tests
 

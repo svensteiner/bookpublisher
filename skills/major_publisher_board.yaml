@@ -1,0 +1,11 @@
+name: major_publisher_board
+purpose: Simulates a serious publishing-house board review before release.
+checks:
+  - acquisition verdict and reader promise
+  - manuscript architecture and chapter order
+  - line quality without over-polishing
+  - production readiness and release risks
+heuristics:
+  - publish only when a paying reader can understand and receive the promise
+  - protect the author's operator voice over generic elegance
+  - convert vague praise into exact fixes

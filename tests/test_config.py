@@ -14,6 +14,8 @@ skip_directories: [artifacts]
 supported_files:
   manuscripts: [.docx]
 supplemental_text_directories: [nicht_hochladen]
+skills_directory: skills
+memory_path: artifacts/agent_memory.json
 """,
         encoding="utf-8",
     )
@@ -24,3 +26,5 @@ supplemental_text_directories: [nicht_hochladen]
     assert loaded.fallback_model == "gpt-4.1-mini"
     assert "artifacts" in loaded.skip_directories
     assert "nicht_hochladen" in loaded.supplemental_text_directories
+    assert str(loaded.skills_directory) == "skills"
+    assert str(loaded.memory_path).replace("\\", "/") == "artifacts/agent_memory.json"

@@ -355,7 +355,7 @@ def _sellability_gate(project: BookProject, profile: dict[str, Any], notes_text:
     return Gate("amazon_sellability", _status(max(0, score)), max(0, score), findings, fixes)
 
 
-def build_industrial_qa(project: BookProject) -> dict[str, Any]:
+def build_industrial_qa(project: BookProject, agent_context: dict[str, Any] | None = None) -> dict[str, Any]:
     notes_text = _read_notes(project)
     profile = analyze_docx_structure(project.manuscript)
     gates = [
@@ -380,6 +380,7 @@ def build_industrial_qa(project: BookProject) -> dict[str, Any]:
         "docx_profile": profile,
         "keywords_found": _extract_keywords(notes_text),
         "all_required_fixes": [fix for gate in gates for fix in gate.fixes],
+        "agent_context": agent_context or {},
     }
 
 
@@ -392,9 +393,29 @@ def render_industrial_qa_markdown(report: dict[str, Any]) -> str:
         f"Industrial score: **{report['industrial_score']}/100**",
         f"Investor grade: **{report['investor_grade']}/10**",
         "",
+    ]
+    agent_context = report.get("agent_context") or {}
+    skills = agent_context.get("skills") or []
+    memory = agent_context.get("memory") or {}
+    if skills or memory:
+        lines.extend(["## Agent System", ""])
+        if skills:
+            lines.append("Loaded skills:")
+            lines.extend(f"- {skill.get('name', 'unknown')}: {skill.get('purpose', 'n/a')}" for skill in skills)
+            lines.append("")
+        project_memory = memory.get("project_memory") or {}
+        if project_memory.get("rounds"):
+            latest = project_memory["rounds"][-1]
+            lines.extend([
+                "Memory:",
+                f"- Previous decision: {latest.get('decision', 'n/a')}",
+                f"- Previous industrial score: {latest.get('industrial_score', 'n/a')}",
+                "",
+            ])
+    lines.extend([
         "## Gates",
         "",
-    ]
+    ])
     for gate in report["gates"]:
         lines.extend([
             f"### {gate['name']} - {gate['status']} ({gate['score']}/100)",
