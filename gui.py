@@ -56,7 +56,7 @@ class PublisherGui(tk.Tk):
         ).pack(anchor=tk.W, padx=8, pady=(8, 2))
         ttk.Radiobutton(
             options,
-            text="Vollreview mit OpenAI-Key (Lektorat, Verlagshaus-Gutachten, Launch-Texte)",
+            text="Vollreview mit KI (Lektorat, Verlagshaus-Gutachten, Launch-Texte)",
             variable=self.full_review,
             value=True,
         ).pack(anchor=tk.W, padx=8, pady=(2, 8))
@@ -111,6 +111,19 @@ class PublisherGui(tk.Tk):
         if not input_path.exists():
             messagebox.showerror("Ordner nicht gefunden", f"Dieser Ordner existiert nicht:\n{input_path}")
             return
+
+        if self.full_review.get():
+            confirmed = messagebox.askokcancel(
+                "KI-API wird aufgerufen",
+                "Der Vollreview ruft die Claude-API auf.\n\n"
+                "Geschaetzte Kosten:\n"
+                "  ~ €0.30 – 0.50 pro Runde\n"
+                "  ~ €2 – 4 gesamt fuer ein vollstaendiges Buch\n\n"
+                "ANTHROPIC_API_KEY muss in der .env-Datei eingetragen sein.\n\n"
+                "Fortfahren?",
+            )
+            if not confirmed:
+                return
 
         self._set_busy(True)
         self.open_button.configure(state=tk.DISABLED)

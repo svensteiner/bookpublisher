@@ -42,7 +42,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     load_dotenv(PROJECT_ROOT / ".env")
 
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    required = ["default_input_path", "default_model", "fallback_model"]
+    required = ["default_model", "fallback_model"]
     missing = [key for key in required if not data.get(key)]
     if missing:
         raise ConfigError(f"Missing required config values: {', '.join(missing)}")
@@ -57,7 +57,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
 
     return AppConfig(
         project_root=PROJECT_ROOT,
-        default_input_path=Path(data["default_input_path"]),
+        default_input_path=Path(data["default_input_path"]) if data.get("default_input_path") else Path.home(),
         default_model=str(data["default_model"]),
         fallback_model=str(data["fallback_model"]),
         temperature=float(data.get("temperature", 0.2)),

@@ -1,10 +1,10 @@
 agent_name: bookpublisher
 agent_version: 1.0.0
 
-default_input_path: "C:\\Users\\svens\\OneDrive\\Desktop\\Buch für Amazon\\AI_Studioxyz_KDP\\endversion"
+default_input_path: ""
 
-default_model: gpt-4.1
-fallback_model: gpt-4.1-mini
+default_model: claude-sonnet-4-6
+fallback_model: claude-haiku-4-5-20251001
 temperature: 0.2
 max_manuscript_chars: 60000
 

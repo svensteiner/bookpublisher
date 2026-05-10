@@ -161,10 +161,15 @@ def _extract_description(text: str) -> str | None:
 
 
 def _clean_author(line: str) -> str:
-    value = re.sub(r"^(von|autor)\s*:?\s*", "", line, flags=re.I).strip()
+    value = re.sub(r"^(von|autor|by)\s*:?\s*", "", line, flags=re.I).strip()
     value = re.sub(r"copyright\s*[©(c)]*\s*\d{4}", "", value, flags=re.I).strip(" .")
     value = re.sub(r"alle rechte vorbehalten\.?", "", value, flags=re.I).strip(" .")
-    match = re.search(r"(Mag\.\s+Sven\s+Steiner|Sven\s+Steiner)", value, flags=re.I)
+    # Extract name: optional academic title + capitalized word sequence
+    match = re.search(
+        r"((?:(?:Mag|Dr|Prof|Dipl\.[-\w]*|M\.?\s?Sc|B\.?\s?Sc)\.\s+)?[A-ZÄÖÜ][a-zäöüß]+"
+        r"(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+)",
+        value,
+    )
     if match:
         return match.group(1).strip()
     return value
@@ -180,7 +185,7 @@ def _extract_metadata_from_text(text: str) -> dict[str, str | None]:
         lower = line.lower()
         if not subtitle and len(line) > 8 and not lower.startswith(("von ", "autor", "copyright", "ki-hinweis")):
             subtitle = line
-        if "von " in lower or "mag. sven" in lower or lower.startswith("autor"):
+        if "von " in lower or lower.startswith("autor") or re.search(r"\b(mag|dr|prof|by)\b", lower):
             author = _clean_author(line)
 
     title_match = re.search(r"##\s+KDP Titel\s*\n+\s*\**(.+?)\**\s*(?:\n|$)", text, flags=re.I)

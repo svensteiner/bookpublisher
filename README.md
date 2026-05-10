@@ -60,16 +60,14 @@ cd /d "C:\Automatisierungen\github projekte\bookpublisher" && copy .env.example 
 Open `.env` and add:
 
 ```text
-OPENAI_API_KEY=your_key_here
+ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+Get a key at https://console.anthropic.com → API Keys. The quick QA gate (`python main.py qa`) runs without any API key.
 
 ## Run
 
-Default input folder:
-
-```text
-C:\Users\svens\OneDrive\Desktop\Buch für Amazon\AI_Studioxyz_KDP\endversion
-```
+Default input folder: select via GUI or pass as argument. No hardcoded path required.
 
 Commands:
 

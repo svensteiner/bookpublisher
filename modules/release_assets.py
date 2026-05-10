@@ -51,7 +51,51 @@ def render_kindle_preview_check(project: BookProject) -> str:
     return "\n".join(lines)
 
 
+_STOP_WORDS = {
+    "eine", "einen", "einem", "eines", "der", "die", "das", "und", "oder",
+    "aber", "auch", "sich", "nicht", "mit", "von", "fuer", "über", "meine",
+    "mein", "wie", "was", "ich", "wir", "haben", "wird", "kann", "wenn",
+    "dass", "als", "aus", "bei", "nach", "seit", "ohne", "the", "and", "for",
+    "with", "how", "what", "that", "this", "from",
+}
+
+
+def _derive_search_queries(project: BookProject, max_queries: int = 7) -> list[str]:
+    """Generate Amazon search queries from title, subtitle, and description."""
+    queries: list[str] = []
+
+    if project.title:
+        queries.append(project.title[:60])
+
+    # Extract significant words from title + subtitle
+    raw = " ".join(filter(None, [project.title, project.subtitle]))
+    words = [
+        w.strip(".,!?;:\"'()[]") for w in raw.split()
+        if len(w) > 4 and w.lower().strip(".,!?;:\"'()[]") not in _STOP_WORDS
+    ]
+
+    # Build 2-word keyphrases
+    for i in range(0, len(words) - 1, 2):
+        phrase = f"{words[i]} {words[i + 1]}"
+        if phrase not in queries:
+            queries.append(phrase)
+        if len(queries) >= max_queries - 1:
+            break
+
+    # Add subtitle as a separate query if distinct
+    if project.subtitle and project.subtitle not in queries:
+        queries.append(project.subtitle[:60])
+
+    # Fallback if too few queries
+    if len(queries) < 3:
+        queries.extend(["Sachbuch Praxis", "Ratgeber Praxis"])
+
+    return queries[:max_queries]
+
+
 def render_amazon_research_brief(project: BookProject) -> str:
+    queries = _derive_search_queries(project)
+    query_lines = "\n".join(f"- {q}" for q in queries)
     lines = [
         "# Amazon-Recherche",
         "",
@@ -65,13 +109,7 @@ def render_amazon_research_brief(project: BookProject) -> str:
         "",
         "## Suchbegriffe fuer Amazon",
         "",
-        "- KI Agenten Unternehmen",
-        "- KI Automatisierung Praxis",
-        "- kuenstliche Intelligenz Unternehmen",
-        "- Automatisierung ohne Mitarbeiter",
-        "- KI fuer Selbststaendige",
-        "- Zukunft der Arbeit KI",
-        "- KI Produktivitaet Manager",
+        query_lines,
         "",
         "## Was du eintragen sollst",
         "",
@@ -91,7 +129,8 @@ def render_amazon_research_brief(project: BookProject) -> str:
     return "\n".join(lines)
 
 
-def render_competitor_template_csv() -> str:
+def render_competitor_template_csv(project: BookProject | None = None) -> str:
+    queries = _derive_search_queries(project) if project else ["Sachbuch Praxis", "Ratgeber Praxis"]
     output = StringIO()
     writer = csv.writer(output, lineterminator="\n")
     writer.writerow([
@@ -109,14 +148,6 @@ def render_competitor_template_csv() -> str:
         "our_advantage",
         "risk_for_our_book",
     ])
-    for query in [
-        "KI Agenten Unternehmen",
-        "KI Automatisierung Praxis",
-        "kuenstliche Intelligenz Unternehmen",
-        "Automatisierung ohne Mitarbeiter",
-        "KI fuer Selbststaendige",
-        "Zukunft der Arbeit KI",
-        "KI Produktivitaet Manager",
-    ]:
+    for query in queries:
         writer.writerow([query, "", "", "", "", "", "", "", "", "", "", "", ""])
     return output.getvalue()

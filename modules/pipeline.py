@@ -144,7 +144,7 @@ class PublisherPipeline:
             self.writer.write_text("beginner_summary.md", render_beginner_summary(project, qa), project.project_id)
             self.writer.write_text("kindle_preview_check.md", render_kindle_preview_check(project), project.project_id)
             self.writer.write_text("amazon_research_brief.md", render_amazon_research_brief(project), project.project_id)
-            self.writer.write_text("competitor_research_template.csv", render_competitor_template_csv(), project.project_id)
+            self.writer.write_text("competitor_research_template.csv", render_competitor_template_csv(project), project.project_id)
             self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
             self.logger.log(
                 "industrial_qa_completed",

@@ -1,12 +1,13 @@
 name: voice_preservation
-purpose: Preserves the author's practical Austrian CFO/operator field-note voice.
+purpose: Preserves the author's authentic voice — whatever that voice is.
 checks:
-  - anti-hype tone
-  - concrete numbers and operating examples
-  - generic AI phrasing
-  - consultant language and motivational filler
-  - over-polished passages
+  - consistency with the author's established tone and register
+  - concrete, specific language versus generic filler
+  - passages that sound like marketing copy rather than the author
+  - consultant or motivational language the author would not use
+  - over-polished rewrites that erase the author's personality
 heuristics:
-  - rough specificity is better than smooth generic prose
-  - do not add emotional drama that the author would not write
-  - keep practical skepticism visible in marketing and manuscript fixes
+  - specific and rough beats smooth and generic
+  - do not add emotional framing the original text does not contain
+  - keep the author's distinctive perspective visible throughout
+  - flag suggestions that change meaning, not just style

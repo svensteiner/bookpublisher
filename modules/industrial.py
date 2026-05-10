@@ -328,10 +328,14 @@ def _sellability_gate(project: BookProject, profile: dict[str, Any], notes_text:
     combined = "\n".join([project.title or "", project.subtitle or "", project.amazon_description or "", notes_text])
 
     markers = {
-        "specific_reader": r"\b(selbstst[aä]ndige|gr[uü]nder|manager|cfo|berater|wissensarbeiter)\b",
-        "anti_hype_positioning": r"\b(kein hype|keine tool-liste|keine motivations|n[üu]chtern|feldnotiz|echte fehler)\b",
-        "proof": r"\b(unter 50|90 tage|47 linkedin|keine zahlenden kunden|tradingbot|prompt-leak)\b",
-        "practical_payoff": r"\b(startpunkte|kontrollregeln|aufgaben|praktisch|abgeben|bleiben)\b",
+        # Targets a named reader type — works for any nonfiction category
+        "specific_reader": r"\b(selbstst[aä]ndige|gr[uü]nder|manager|ceo|cfo|cto|berater|wissensarbeiter|unternehmer|f[uü]hrungskraft|freiberufler|coach|einsteiger|fortgeschrittene|professional|leser|angestellte|studenten)\b",
+        # Claims a differentiated, non-generic angle
+        "differentiated_angle": r"\b(kein hype|keine theorie|echte praxis|n[üu]chtern|ehrlich|anders als|ohne umwege|direkt|konkret|nicht wie|feldnotiz|aus der praxis|gegen den strom)\b",
+        # Contains any specific number+unit or concrete proof signal — works for any book
+        "proof_or_specificity": r"(?:\d+\s*(?:euro|€|\$|stunden|tage|wochen|monate|%|prozent|schritte|tipps|methoden|beispiele|strategien|fehler|projekte|seiten|jahre|kunden|nutzer|minuten)|(?:fallstudie|case study|selbst getestet|live-projekt|aus eigener erfahrung))",
+        # Promises actionable content — generic nonfiction buying signal
+        "practical_payoff": r"\b(anleitung|schritt-f[uü]r-schritt|methode|system|framework|checkliste|vorlage|werkzeug|praktisch|umsetzbar|sofort|heute noch|direkt anwendbar|leitfaden|aufgaben|kontrollpunkte)\b",
     }
     for name, pattern in markers.items():
         if re.search(pattern, combined, flags=re.I):
