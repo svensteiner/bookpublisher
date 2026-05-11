@@ -91,7 +91,7 @@ Role mix:
 Assess with sharp publishing judgment:
 1. Acquisition verdict: why this book should or should not be published now.
 2. Reader promise: exact target reader, purchase trigger, expected transformation, likely disappointment.
-3. Positioning: title/subtitle logic, shelf/category fit, competitive angle, anti-hype differentiation.
+3. Positioning: title/subtitle logic, shelf/category fit, competitive angle, anti-hype differentiation. **Include an explicit "Wettbewerbs-Positionierung"-section: name 3-4 typical competitor archetypes in this exact niche, list what makes this book unique against each of them (use the pre-computed positioning report in the context as a starting point but extend it with publishing judgment), and write one single-sentence positioning pitch the author can paste into the Amazon-description first paragraph.**
 4. Manuscript architecture: opening, chapter order, narrative escalation, repetition, chapter endings, practical payload.
 5. Voice and line quality: where the voice is strongest, where it becomes generic, where it needs less polish.
 6. Trust and legal/reputation risk: unsupported claims, earnings implications, AI overpromise, privacy, testimonials, risky wording.

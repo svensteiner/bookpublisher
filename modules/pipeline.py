@@ -9,6 +9,10 @@ from modules.amazon_html import (
     render_amazon_description_report_markdown,
 )
 from modules.artifacts import ArtifactWriter
+from modules.competitive_positioning import (
+    build_positioning_report,
+    render_positioning_markdown,
+)
 from modules.config import AppConfig
 from modules.cover import render_cover_review
 from modules.discovery import BookProject, discover_books, render_discovery_markdown
@@ -108,7 +112,23 @@ class PublisherPipeline:
             amazon_md = amazon_review(project, self.config, self.llm)
             self.writer.write_text("amazon_conversion_review.md", amazon_md, project.project_id)
 
-            context = "\n\n".join([agent_context, project_metadata(project), review_md, voice_md, amazon_md])
+            positioning = build_positioning_report(project)
+            positioning_md = render_positioning_markdown(project, positioning)
+            self.writer.write_text("competitive_positioning.md", positioning_md, project.project_id)
+            self.writer.write_json(
+                "competitive_positioning.json",
+                positioning.to_json(),
+                project.project_id,
+            )
+
+            context = "\n\n".join([
+                agent_context,
+                project_metadata(project),
+                review_md,
+                voice_md,
+                amazon_md,
+                positioning_md,
+            ])
             self.logger.log("stage_started", project_id=project.project_id, stage="publisher_board_review")
             board_md = publisher_board_review(project, context, self.llm)
             self.writer.write_text("publisher_board_review.md", board_md, project.project_id)
@@ -128,6 +148,8 @@ class PublisherPipeline:
             "manuscript_score.json",
             "voice_preservation_report.md",
             "amazon_conversion_review.md",
+            "competitive_positioning.md",
+            "competitive_positioning.json",
             "publisher_board_review.md",
             "kdp_publish_checklist.md",
             "final_publisher_summary.md",
@@ -218,6 +240,25 @@ class PublisherPipeline:
                 "amazon_description.json",
                 amazon_html_snippet.to_json(),
                 project.project_id,
+            )
+            positioning = build_positioning_report(project)
+            self.writer.write_text(
+                "competitive_positioning.md",
+                render_positioning_markdown(project, positioning),
+                project.project_id,
+            )
+            self.writer.write_json(
+                "competitive_positioning.json",
+                positioning.to_json(),
+                project.project_id,
+            )
+            self.logger.log(
+                "competitive_positioning_completed",
+                project_id=project.project_id,
+                niche=positioning.niche_key,
+                niche_confidence=positioning.niche_confidence,
+                angle_count=len(positioning.unique_angles),
+                risk_count=len(positioning.collision_risks),
             )
             kdp_keywords = build_kdp_keywords(project)
             self.writer.write_text(
@@ -311,6 +352,8 @@ class PublisherPipeline:
             "amazon_description.json",
             "kdp_keywords.md",
             "kdp_keywords.json",
+            "competitive_positioning.md",
+            "competitive_positioning.json",
             "sample_scan.md",
             "sample_scan.json",
             "agent_memory_snapshot.json",

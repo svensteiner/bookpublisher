@@ -32,6 +32,8 @@ QUICK_ROUND_ARTIFACTS = [
     "amazon_description_report.md",
     "kdp_keywords.md",
     "kdp_keywords.json",
+    "competitive_positioning.md",
+    "competitive_positioning.json",
     "sample_scan.md",
     "sample_scan.json",
     "score_history.md",
