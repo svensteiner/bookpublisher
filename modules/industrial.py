@@ -30,14 +30,43 @@ class Gate:
         }
 
 
-def _status(score: int, blocking: bool = False) -> str:
+SCORE_READY_THRESHOLD: int = 85
+SCORE_REVIEW_THRESHOLD: int = 65
+
+SCORE_BADGE_READY: str = "🟢"
+SCORE_BADGE_REVIEW: str = "🟡"
+SCORE_BADGE_FIX: str = "🔴"
+
+# Beginner-friendly German labels per gate (technical key → display label).
+GATE_DISPLAY_LABELS: dict[str, str] = {
+    "asset_completeness": "Dateien vollständig",
+    "metadata_and_storefront": "Amazon-Metadaten",
+    "kindle_ebook_readiness": "Kindle-Lesbarkeit",
+    "production_package": "Produktionspaket",
+    "amazon_sellability": "Amazon-Verkaufbarkeit",
+}
+
+
+def score_badge(score: int, *, blocking: bool = False) -> tuple[str, str]:
+    """Return (emoji, status) for a 0-100 score under the unified scheme.
+
+    Status string mirrors the ``_status`` thresholds so the badge stays
+    consistent across all artifacts (beginner_summary, industrial_qa,
+    chapter_review, sample_scan).
+    """
+
     if blocking:
-        return "FIX"
-    if score >= 85:
-        return "READY"
-    if score >= 65:
-        return "REVIEW"
-    return "FIX"
+        return SCORE_BADGE_FIX, "FIX"
+    if score >= SCORE_READY_THRESHOLD:
+        return SCORE_BADGE_READY, "READY"
+    if score >= SCORE_REVIEW_THRESHOLD:
+        return SCORE_BADGE_REVIEW, "REVIEW"
+    return SCORE_BADGE_FIX, "FIX"
+
+
+def _status(score: int, blocking: bool = False) -> str:
+    _, status = score_badge(score, blocking=blocking)
+    return status
 
 
 def _word_count(text: str) -> int:
@@ -433,6 +462,27 @@ def _plain_fix(fix: str) -> str:
     return fix
 
 
+def _render_gate_overview(report: dict[str, Any]) -> list[str]:
+    """Render the unified Gate-Übersicht block for beginner_summary."""
+
+    gates = report.get("gates") or []
+    if not gates:
+        return []
+    lines: list[str] = ["## Gate-Übersicht", "", "Skala: 🟢 ≥85 · 🟡 65–84 · 🔴 <65", ""]
+    for gate in gates:
+        name = gate.get("name") or ""
+        score = int(gate.get("score") or 0)
+        blocking = (gate.get("status") == "FIX") and score >= SCORE_REVIEW_THRESHOLD
+        badge, status = score_badge(score, blocking=blocking)
+        # Respect an explicit FIX status that ignores the score (blocking gates).
+        if gate.get("status") == "FIX" and status != "FIX":
+            badge, status = SCORE_BADGE_FIX, "FIX"
+        label = GATE_DISPLAY_LABELS.get(name, name.replace("_", " ").title())
+        lines.append(f"- {badge} **{label}** — {score}/100 ({status})")
+    lines.append("")
+    return lines
+
+
 def render_beginner_summary(project: BookProject, report: dict[str, Any]) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -440,17 +490,27 @@ def render_beginner_summary(project: BookProject, report: dict[str, Any]) -> str
     profile = report.get("docx_profile", {})
     fixes = report.get("all_required_fixes", [])
 
+    industrial_score = report.get("industrial_score")
+    overall_badge = (
+        score_badge(int(industrial_score))[0]
+        if isinstance(industrial_score, (int, float))
+        else ""
+    )
+
     lines = [
         "# Einfache Buch-Pruefung",
         "",
         f"Buch: **{project.title or project.project_id}**",
         f"Ampel: **{light}**",
         f"Ergebnis: {plain_decision}",
-        f"Score: **{report.get('industrial_score', 'n/a')}/100**",
-        "",
-        "## Was ist schon gut?",
+        f"Score: {overall_badge} **{industrial_score if industrial_score is not None else 'n/a'}/100**",
         "",
     ]
+    lines.extend(_render_gate_overview(report))
+    lines.extend([
+        "## Was ist schon gut?",
+        "",
+    ])
 
     positives: list[str] = []
     if gates.get("asset_completeness", {}).get("status") == "READY":
@@ -536,8 +596,11 @@ def render_industrial_qa_markdown(report: dict[str, Any]) -> str:
         "",
     ])
     for gate in report["gates"]:
+        score = int(gate.get("score") or 0)
+        explicit_fix = gate.get("status") == "FIX" and score >= SCORE_REVIEW_THRESHOLD
+        badge, _ = score_badge(score, blocking=explicit_fix)
         lines.extend([
-            f"### {gate['name']} - {gate['status']} ({gate['score']}/100)",
+            f"### {badge} {gate['name']} - {gate['status']} ({gate['score']}/100)",
             "",
             "Findings:",
             *(f"- {item}" for item in gate["findings"]),

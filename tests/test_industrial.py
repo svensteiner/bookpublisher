@@ -7,6 +7,10 @@ import pytest
 
 from modules.discovery import BookProject
 from modules.industrial import (
+    GATE_DISPLAY_LABELS,
+    SCORE_BADGE_FIX,
+    SCORE_BADGE_READY,
+    SCORE_BADGE_REVIEW,
     Gate,
     _asset_gate,
     _kindle_gate,
@@ -16,6 +20,8 @@ from modules.industrial import (
     _status,
     build_industrial_qa,
     render_beginner_summary,
+    render_industrial_qa_markdown,
+    score_badge,
 )
 
 
@@ -216,3 +222,81 @@ def test_render_beginner_summary_contains_ampel():
     assert "Ampel" in summary
     assert "Buch" in summary
     assert "Score" in summary
+
+
+# ─── score_badge — einheitliche Score-Darstellung ─────────────────────
+
+
+def test_score_badge_ready_at_threshold_85():
+    badge, status = score_badge(85)
+    assert badge == SCORE_BADGE_READY
+    assert status == "READY"
+
+
+def test_score_badge_review_between_65_and_84():
+    for score in (65, 70, 84):
+        badge, status = score_badge(score)
+        assert badge == SCORE_BADGE_REVIEW
+        assert status == "REVIEW"
+
+
+def test_score_badge_fix_below_65():
+    for score in (0, 40, 64):
+        badge, status = score_badge(score)
+        assert badge == SCORE_BADGE_FIX
+        assert status == "FIX"
+
+
+def test_score_badge_blocking_forces_fix_regardless_of_score():
+    badge, status = score_badge(95, blocking=True)
+    assert badge == SCORE_BADGE_FIX
+    assert status == "FIX"
+
+
+def test_render_beginner_summary_contains_gate_overview_with_badges():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(_project(manuscript=None, cover=None), result)
+    assert "Gate-Übersicht" in summary
+    assert "Skala: 🟢" in summary
+    # At least one badge from the unified set must appear.
+    assert any(b in summary for b in (SCORE_BADGE_READY, SCORE_BADGE_REVIEW, SCORE_BADGE_FIX))
+
+
+def test_render_beginner_summary_uses_german_gate_labels():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(_project(manuscript=None, cover=None), result)
+    # At least the asset gate (always reported) should appear with its German label.
+    assert GATE_DISPLAY_LABELS["asset_completeness"] in summary
+
+
+def test_render_industrial_qa_markdown_prefixes_each_gate_with_badge():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    markdown = render_industrial_qa_markdown(result)
+    badge_chars = (SCORE_BADGE_READY, SCORE_BADGE_REVIEW, SCORE_BADGE_FIX)
+    for gate in result["gates"]:
+        header_present = any(
+            f"### {b} {gate['name']}" in markdown for b in badge_chars
+        )
+        assert header_present, f"No badge for gate {gate['name']} in markdown"
+
+
+def test_overall_score_line_has_unified_badge():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(_project(manuscript=None, cover=None), result)
+    badge_chars = (SCORE_BADGE_READY, SCORE_BADGE_REVIEW, SCORE_BADGE_FIX)
+    score_line = next(line for line in summary.splitlines() if line.startswith("Score:"))
+    assert any(b in score_line for b in badge_chars)
+
+
+def test_render_beginner_summary_handles_empty_gate_list():
+    minimal_report = {
+        "decision": "GO_AFTER_FIXES",
+        "industrial_score": 70,
+        "gates": [],
+        "all_required_fixes": ["Fix something"],
+        "docx_profile": {},
+    }
+    summary = render_beginner_summary(_project(manuscript=None, cover=None), minimal_report)
+    # Without gates we still get the structure, just no Gate-Übersicht.
+    assert "Gate-Übersicht" not in summary
+    assert "Score:" in summary
