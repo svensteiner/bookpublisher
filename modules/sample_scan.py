@@ -489,12 +489,9 @@ def build_sample_scan_report_from_paragraphs(
 def _docx_paragraph_stream(path: Any) -> list[dict[str, Any]]:
     """Read a DOCX into the paragraph-stream format used everywhere else."""
 
-    try:
-        from docx import Document
-    except ImportError as exc:  # pragma: no cover - integration env only
-        raise RuntimeError("python-docx is required to read .docx manuscripts") from exc
+    from modules.readers import open_docx_paragraphs
 
-    doc = Document(path)
+    doc = open_docx_paragraphs(path)
     paragraphs: list[dict[str, Any]] = []
     for para in doc.paragraphs:
         text = para.text.strip()

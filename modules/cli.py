@@ -6,6 +6,7 @@ from pathlib import Path
 
 from modules.config import ConfigError, load_config
 from modules.pipeline import PublisherPipeline
+from modules.readers import ManuscriptReadError
 from modules.run_logger import RunLogger
 
 
@@ -59,6 +60,9 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
+    except ManuscriptReadError as exc:
+        print(f"\nManuskript konnte nicht gelesen werden.\n\n{exc}\n", file=sys.stderr)
+        return 3
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

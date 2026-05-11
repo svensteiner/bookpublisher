@@ -87,12 +87,9 @@ def _extract_keywords(text: str) -> list[str]:
 def analyze_docx_structure(path: Path | None) -> dict[str, Any]:
     if not path:
         return {"available": False}
-    try:
-        from docx import Document
-    except ImportError as exc:
-        raise RuntimeError("python-docx is required for industrial QA") from exc
+    from modules.readers import open_docx_paragraphs
 
-    doc = Document(path)
+    doc = open_docx_paragraphs(path)
     paragraphs: list[dict[str, Any]] = []
     headings: list[str] = []
     body_word_counts: list[int] = []

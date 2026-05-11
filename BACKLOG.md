@@ -24,7 +24,7 @@ Ein Item pro Run vollständig implementieren — kein Halbzeug.
 
 - [ ] **Einheitliche Score-Darstellung:** Alle Gates nutzen dieselbe Skala und dasselbe Farbschema in beginner_summary.md (🟢 ≥85, 🟡 65–84, 🔴 <65).
 - [ ] **.env.example aktualisieren:** ANTHROPIC_API_KEY dokumentieren + Kommentare welche Features welchen Key brauchen.
-- [ ] **Fehler-Meldungen verbessern:** Wenn ein DOCX nicht gelesen werden kann → klarer Text welche Datei fehlt und was der User tun soll. Kein Python-Traceback für den End-User.
+- [x] **Fehler-Meldungen verbessern:** Wenn ein DOCX nicht gelesen werden kann → klarer Text welche Datei fehlt und was der User tun soll. Kein Python-Traceback für den End-User. *(modules/readers.py: neue Exception `ManuscriptReadError(RuntimeError)` mit Pfad+Grund+Hinweis, gemeinsamer Helper `_open_docx_document()` wrapped `PackageNotFoundError`/`BadZipFile`/`PermissionError`/`FileNotFoundError`/`IsADir` in eine deutsche User-Message mit konkretem nächsten Schritt. chapters.py / industrial.py / sample_scan.py nutzen jetzt den gemeinsamen `open_docx_paragraphs()` Entry-Point. GUI (`gui.py`) zeigt für `ManuscriptReadError` einen eigenen Dialog-Titel „Manuskript konnte nicht gelesen werden". CLI (`modules/cli.py`) gibt Exit-Code 3 mit lesbarem Text aus. 16 Unit-Tests in tests/test_readers.py decken alle Fehlerpfade ab und prüfen, dass kein Traceback-Text in den Messages auftaucht.)*
 
 ## Neu entdeckt (während Implementierung gefunden)
 
@@ -53,3 +53,5 @@ Ein Item pro Run vollständig implementieren — kein Halbzeug.
 - [ ] **Release-ZIP-Builder-Skript:** `scripts/build_release_zip.bat` der `dist/BookPublisher.exe` + `release/beispielbuch/` + `BookPublisher starten.bat` + Kurz-LIES_MICH.txt in ein einzelnes `BookPublisher.zip` packt, das auf die Homepage hochgeladen werden kann.
 - [ ] **Beispielbuch-Cover ergänzen:** `release/beispielbuch/` enthält noch kein Cover-Bild (Discovery flaggt das aktuell als `missing_assets=['cover_image']`). Final-Cover des echten Buchs hineinkopieren, damit der Kunde im allerersten Test sieht, wie der Agent ein vollständiges Buchpaket bewertet.
 - [ ] **Amazon-Beschreibung-Bullets aus Manuskript:** Aktuelle Bullets in `release/beispielbuch/metadata.md` sind manuell verfasst. LLM-Pass könnte aus den Kapiteln direkt die stärksten Verkaufs-Bullets extrahieren — Beispielbuch dient dann gleichzeitig als Live-Demo dieser Funktion.
+- [ ] **GUI-Smoketest mit Mock-Tkinter:** Aktueller Customer-Journey-Test prüft die Pipeline, aber nicht den `messagebox.showerror`-Pfad des GUI. Ein Test der `gui._poll_events` mit einer `ManuscriptReadError` als Payload aufruft (Tk-loop gemockt) würde die User-Dialog-Verzweigung absichern.
+- [ ] **CLI-Exit-Codes dokumentieren:** Neuer Exit-Code 3 für `ManuscriptReadError` ist nirgends dokumentiert. README-Abschnitt "Run" um eine Tabelle Exit-Code → Bedeutung ergänzen, damit Power-User die CLI in Scripts einbinden können.

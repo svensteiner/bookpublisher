@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from modules.config import ConfigError, load_config
 from modules.pipeline import PublisherPipeline
+from modules.readers import ManuscriptReadError
 from modules.run_logger import RunLogger
 
 
@@ -176,7 +177,12 @@ class PublisherGui(tk.Tk):
                 elif kind == "error":
                     self.status.set("Fehler.")
                     self._set_busy(False)
-                    messagebox.showerror("Pruefrunde fehlgeschlagen", str(payload))
+                    if isinstance(payload, ManuscriptReadError):
+                        messagebox.showerror("Manuskript konnte nicht gelesen werden", str(payload))
+                    elif isinstance(payload, ConfigError):
+                        messagebox.showerror("Konfiguration", str(payload))
+                    else:
+                        messagebox.showerror("Pruefrunde fehlgeschlagen", str(payload))
                     self._set_report_text(str(payload))
         except queue.Empty:
             pass

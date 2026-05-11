@@ -166,12 +166,9 @@ def split_paragraphs_into_chapters(
 def extract_docx_chapters(path: Any) -> list[Chapter]:
     """Read a DOCX file and return its chapters. Pure I/O wrapper."""
 
-    try:
-        from docx import Document
-    except ImportError as exc:  # pragma: no cover - exercised by integration env
-        raise RuntimeError("python-docx is required to extract chapters") from exc
+    from modules.readers import open_docx_paragraphs
 
-    doc = Document(path)
+    doc = open_docx_paragraphs(path)
     paragraphs: list[dict[str, Any]] = []
     for para in doc.paragraphs:
         text = para.text.strip()
