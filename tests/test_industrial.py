@@ -552,6 +552,147 @@ def test_render_beginner_summary_round_delta_zero_score_delta():
     assert "Weiterhin offen — jetzt anpacken" in summary
 
 
+def test_render_beginner_summary_score_history_highlight_rising_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "series": [
+            {"timestamp": "2025-05-10", "score": 70, "delta": None},
+            {"timestamp": "2025-05-11", "score": 78, "delta": 8},
+            {"timestamp": "2025-05-12", "score": 85, "delta": 7},
+        ],
+        "first_score": 70,
+        "latest_score": 85,
+        "delta_total": 15,
+        "trend": "rising",
+        "entry_count": 3,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        score_history_highlight=highlight,
+    )
+    assert "## Score-Verlauf" in summary
+    assert "70/100" in summary
+    assert "85/100" in summary
+    assert "(+8)" in summary
+    assert "(+7)" in summary
+    assert "+15 Punkte" in summary
+    assert "über 3 Runden" in summary
+    assert "steigt" in summary
+    assert "`score_history.md`" in summary
+    # Rising trend uses the READY badge in the trend summary
+    assert SCORE_BADGE_READY in summary
+
+
+def test_render_beginner_summary_score_history_falling_uses_fix_badge():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "series": [
+            {"timestamp": "2025-05-11", "score": 85, "delta": None},
+            {"timestamp": "2025-05-12", "score": 70, "delta": -15},
+        ],
+        "first_score": 85,
+        "latest_score": 70,
+        "delta_total": -15,
+        "trend": "falling",
+        "entry_count": 2,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        score_history_highlight=highlight,
+    )
+    assert "## Score-Verlauf" in summary
+    assert "-15 Punkte" in summary
+    assert "sinkt" in summary
+    assert "(-15)" in summary
+    assert SCORE_BADGE_FIX in summary
+
+
+def test_render_beginner_summary_score_history_stable_uses_review_badge():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "series": [
+            {"timestamp": "2025-05-11", "score": 80, "delta": None},
+            {"timestamp": "2025-05-12", "score": 80, "delta": 0},
+        ],
+        "first_score": 80,
+        "latest_score": 80,
+        "delta_total": 0,
+        "trend": "stable",
+        "entry_count": 2,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        score_history_highlight=highlight,
+    )
+    assert "## Score-Verlauf" in summary
+    assert "±0 Punkte" in summary
+    assert "stabil" in summary
+    # Per-entry zero delta also rendered with ±0 marker
+    assert "(±0)" in summary
+
+
+def test_render_beginner_summary_score_history_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        score_history_highlight=None,
+    )
+    assert "## Score-Verlauf" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        score_history_highlight={},
+    )
+    assert "## Score-Verlauf" not in summary_empty
+
+
+def test_render_beginner_summary_score_history_section_absent_when_single_point():
+    """A series with one entry has no trend — section is omitted."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "series": [{"timestamp": "2025-05-10", "score": 70, "delta": None}],
+        "first_score": 70,
+        "latest_score": 70,
+        "delta_total": 0,
+        "trend": "stable",
+        "entry_count": 1,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        score_history_highlight=highlight,
+    )
+    assert "## Score-Verlauf" not in summary
+
+
+def test_render_beginner_summary_score_history_tolerates_partial_entries():
+    """Missing/invalid score fields should not crash the renderer."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "series": [
+            {"timestamp": "2025-05-10"},
+            {"timestamp": "2025-05-12", "score": 85, "delta": 15},
+        ],
+        "first_score": 0,
+        "latest_score": 85,
+        "delta_total": 85,
+        "trend": "rising",
+        "entry_count": 2,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        score_history_highlight=highlight,
+    )
+    assert "## Score-Verlauf" in summary
+    assert "0/100" in summary
+    assert "85/100" in summary
+
+
 def test_render_beginner_summary_handles_empty_gate_list():
     minimal_report = {
         "decision": "GO_AFTER_FIXES",

@@ -633,6 +633,89 @@ def _render_round_delta_highlight(
     return lines
 
 
+TREND_LABELS: dict[str, str] = {
+    "rising": "steigt",
+    "falling": "sinkt",
+    "stable": "stabil",
+}
+
+
+def _render_score_history_highlight(
+    highlight: dict[str, Any] | None,
+) -> list[str]:
+    """Render the 'Score-Verlauf' block from a score-history highlight.
+
+    Surfaces the score trajectory across the last few rounds so the author
+    sees momentum directly in beginner_summary — no need to open
+    ``score_history.md`` separately. Skips the section entirely when there
+    are fewer than two data points (no trend with only round 1).
+
+    The dict is expected to carry ``series`` (list of ``{timestamp, score,
+    delta}``), ``first_score``, ``latest_score``, ``delta_total`` and
+    ``trend`` (``rising`` / ``falling`` / ``stable``). All counts default
+    to safe values so partial payloads do not crash the renderer.
+    """
+
+    if not highlight:
+        return []
+    series = highlight.get("series") or []
+    if len(series) < 2:
+        return []
+    delta_total = highlight.get("delta_total")
+    trend_key = str(highlight.get("trend") or "stable")
+    trend_label = TREND_LABELS.get(trend_key, "stabil")
+
+    if isinstance(delta_total, (int, float)):
+        delta_int = int(delta_total)
+        if delta_int > 0:
+            trend_badge = SCORE_BADGE_READY
+            delta_text = f"**+{delta_int} Punkte**"
+        elif delta_int < 0:
+            trend_badge = SCORE_BADGE_FIX
+            delta_text = f"**{delta_int} Punkte**"
+        else:
+            trend_badge = SCORE_BADGE_REVIEW
+            delta_text = "**±0 Punkte**"
+    else:
+        trend_badge = SCORE_BADGE_REVIEW
+        delta_text = "**Verlauf unklar**"
+
+    lines: list[str] = [
+        "## Score-Verlauf",
+        "",
+        "So hat sich dein Industrial-Score über die letzten Prüfrunden bewegt:",
+        "",
+    ]
+    for entry in series:
+        try:
+            score = int(entry.get("score") or 0)
+        except (TypeError, ValueError):
+            score = 0
+        badge, _ = score_badge(score)
+        timestamp = str(entry.get("timestamp") or "").strip() or "n/a"
+        delta = entry.get("delta")
+        if isinstance(delta, (int, float)):
+            delta_int = int(delta)
+            if delta_int > 0:
+                delta_suffix = f" (+{delta_int})"
+            elif delta_int < 0:
+                delta_suffix = f" ({delta_int})"
+            else:
+                delta_suffix = " (±0)"
+        else:
+            delta_suffix = ""
+        lines.append(f"- {badge} **{score}/100** — {timestamp}{delta_suffix}")
+    window_len = len(series)
+    lines.extend([
+        "",
+        f"Trend: {trend_badge} {delta_text} über {window_len} Runden — {trend_label}.",
+        "",
+        "Details siehe `score_history.md`.",
+        "",
+    ])
+    return lines
+
+
 def _render_weakest_sample(weakest_sample: dict[str, Any] | None) -> list[str]:
     """Render the 'Schwächster Sample-Abschnitt' block.
 
@@ -671,6 +754,7 @@ def render_beginner_summary(
     weakest_sample: dict[str, Any] | None = None,
     top_rewrite: dict[str, Any] | None = None,
     round_delta_highlight: dict[str, Any] | None = None,
+    score_history_highlight: dict[str, Any] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -726,6 +810,7 @@ def render_beginner_summary(
 
     lines.append("")
     lines.extend(_render_round_delta_highlight(round_delta_highlight))
+    lines.extend(_render_score_history_highlight(score_history_highlight))
     lines.extend(_render_weakest_chapters(weakest_chapters))
     lines.extend(_render_weakest_sample(weakest_sample))
     lines.extend(_render_top_rewrite(top_rewrite))

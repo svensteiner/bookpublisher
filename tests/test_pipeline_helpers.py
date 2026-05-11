@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from modules.pipeline import (
     _round_delta_payload,
+    _score_history_payload,
     _top_rewrite_payload,
     _weakest_chapter_payload,
     _weakest_sample_payload,
@@ -395,3 +396,147 @@ def test_round_delta_payload_does_not_mutate_delta_tuples():
     payload["top_resolved"].append("MUTATED")
     # Re-querying the delta tuple must still be clean
     assert "MUTATED" not in delta.resolved_fixes
+
+
+# ─── _score_history_payload ───────────────────────────────────────────
+
+
+def _history_entry(timestamp: str, score: int) -> dict:
+    return {
+        "timestamp": timestamp,
+        "round_id": "r-" + timestamp,
+        "mode": "quick_qa",
+        "decision": "GO_AFTER_FIXES",
+        "industrial_score": score,
+        "investor_grade": score / 10,
+        "gates": [],
+        "top_fixes": [],
+        "score_delta": None,
+    }
+
+
+def test_score_history_payload_returns_none_when_no_history():
+    assert _score_history_payload(None) is None
+
+
+def test_score_history_payload_returns_none_when_empty_entries():
+    assert _score_history_payload({"entries": []}) is None
+    assert _score_history_payload({}) is None
+
+
+def test_score_history_payload_returns_none_for_single_entry():
+    """A single round has no trend to plot — no point cluttering the summary."""
+    history = {"entries": [_history_entry("2025-05-10", 70)]}
+    assert _score_history_payload(history) is None
+
+
+def test_score_history_payload_rising_trend():
+    history = {
+        "entries": [
+            _history_entry("2025-05-10", 70),
+            _history_entry("2025-05-11", 78),
+            _history_entry("2025-05-12", 85),
+        ]
+    }
+    payload = _score_history_payload(history)
+    assert payload is not None
+    assert payload["trend"] == "rising"
+    assert payload["first_score"] == 70
+    assert payload["latest_score"] == 85
+    assert payload["delta_total"] == 15
+    assert payload["entry_count"] == 3
+    series = payload["series"]
+    assert len(series) == 3
+    assert series[0]["delta"] is None  # first in window has no prior
+    assert series[1]["delta"] == 8
+    assert series[2]["delta"] == 7
+
+
+def test_score_history_payload_falling_trend():
+    history = {
+        "entries": [
+            _history_entry("2025-05-10", 85),
+            _history_entry("2025-05-11", 70),
+        ]
+    }
+    payload = _score_history_payload(history)
+    assert payload is not None
+    assert payload["trend"] == "falling"
+    assert payload["delta_total"] == -15
+
+
+def test_score_history_payload_stable_trend_when_endpoints_match():
+    history = {
+        "entries": [
+            _history_entry("2025-05-10", 80),
+            _history_entry("2025-05-11", 70),
+            _history_entry("2025-05-12", 80),
+        ]
+    }
+    payload = _score_history_payload(history)
+    assert payload is not None
+    assert payload["trend"] == "stable"
+    assert payload["delta_total"] == 0
+
+
+def test_score_history_payload_limit_caps_window():
+    """Older entries beyond the window are dropped; entry_count stays full."""
+    history = {
+        "entries": [
+            _history_entry("2025-05-08", 50),  # excluded by window
+            _history_entry("2025-05-09", 55),  # excluded by window
+            _history_entry("2025-05-10", 70),
+            _history_entry("2025-05-11", 80),
+            _history_entry("2025-05-12", 85),
+        ]
+    }
+    payload = _score_history_payload(history, limit=3)
+    assert payload is not None
+    assert len(payload["series"]) == 3
+    assert payload["first_score"] == 70  # window start, not history start
+    assert payload["latest_score"] == 85
+    assert payload["entry_count"] == 5  # full history count preserved
+
+
+def test_score_history_payload_treats_limit_below_two_as_two():
+    """A one-entry window is meaningless — clamp to at least two."""
+    history = {
+        "entries": [
+            _history_entry("2025-05-10", 70),
+            _history_entry("2025-05-11", 80),
+            _history_entry("2025-05-12", 85),
+        ]
+    }
+    payload = _score_history_payload(history, limit=1)
+    assert payload is not None
+    assert len(payload["series"]) == 2
+    assert payload["first_score"] == 80
+    assert payload["latest_score"] == 85
+
+
+def test_score_history_payload_tolerates_missing_score_fields():
+    history = {
+        "entries": [
+            {"timestamp": "2025-05-10"},
+            {"timestamp": "2025-05-11", "industrial_score": 70},
+        ]
+    }
+    payload = _score_history_payload(history)
+    assert payload is not None
+    assert payload["first_score"] == 0
+    assert payload["latest_score"] == 70
+    assert payload["trend"] == "rising"
+
+
+def test_score_history_payload_is_immutable_against_caller_mutation():
+    """Mutating the returned series must not affect the source history."""
+    history = {
+        "entries": [
+            _history_entry("2025-05-10", 70),
+            _history_entry("2025-05-11", 85),
+        ]
+    }
+    payload = _score_history_payload(history)
+    assert payload is not None
+    payload["series"][0]["score"] = 999
+    assert history["entries"][0]["industrial_score"] == 70

@@ -172,6 +172,70 @@ def _round_delta_payload(
     }
 
 
+def _score_history_payload(
+    history: dict | None,
+    *,
+    limit: int = 3,
+) -> dict | None:
+    """Compact score-history highlight for beginner_summary.
+
+    Returns ``None`` when there are fewer than two entries in the history —
+    a single data point has no trend to show and would only add noise to
+    the summary. With two or more entries, returns a dict the renderer can
+    consume without re-reading score_history data:
+
+    - ``series``: last ``limit`` entries, each carrying ``timestamp``,
+      ``score`` and an ``delta`` against the previous entry in the window
+      (``None`` for the first entry).
+    - ``first_score`` / ``latest_score``: anchors for the trend headline.
+    - ``delta_total``: ``latest_score - first_score`` over the window.
+    - ``trend``: ``"rising"`` / ``"falling"`` / ``"stable"`` — one of three
+      stable keys so the renderer can pick the right badge and German
+      label without re-deriving the comparison.
+
+    The helper is immutable: it copies values out of ``history.entries``
+    so a caller mutating the returned dict cannot mutate the source.
+    """
+
+    if not history:
+        return None
+    entries = history.get("entries") or []
+    if len(entries) < 2:
+        return None
+    window_size = max(2, limit)
+    window = entries[-window_size:]
+    series: list[dict] = []
+    previous_score: int | None = None
+    for entry in window:
+        try:
+            score = int(entry.get("industrial_score") or 0)
+        except (TypeError, ValueError):
+            score = 0
+        timestamp = str(entry.get("timestamp") or "")
+        delta: int | None = (
+            None if previous_score is None else score - previous_score
+        )
+        series.append({"timestamp": timestamp, "score": score, "delta": delta})
+        previous_score = score
+    first_score = series[0]["score"]
+    latest_score = series[-1]["score"]
+    delta_total = latest_score - first_score
+    if delta_total > 0:
+        trend = "rising"
+    elif delta_total < 0:
+        trend = "falling"
+    else:
+        trend = "stable"
+    return {
+        "series": series,
+        "first_score": first_score,
+        "latest_score": latest_score,
+        "delta_total": delta_total,
+        "trend": trend,
+        "entry_count": len(entries),
+    }
+
+
 def _weakest_sample_payload(sample_json: dict | None) -> dict | None:
     """Extract the highest-risk Kindle-Sample section from a sample-scan payload.
 
@@ -371,6 +435,10 @@ class PublisherPipeline:
             top_rewrite = _top_rewrite_payload(rewrite_json)
             delta = self.memory.compare_rounds(project.project_id, current_round_id=round_id)
             round_delta_highlight = _round_delta_payload(delta)
+            history_path = self.writer.project_dir(project.project_id) / "score_history.json"
+            history = load_score_history(history_path, project.project_id)
+            history = append_score_history(history, project, qa, round_id=round_id, mode=mode)
+            score_history_highlight = _score_history_payload(history)
             self.writer.write_text(
                 "beginner_summary.md",
                 render_beginner_summary(
@@ -380,6 +448,7 @@ class PublisherPipeline:
                     weakest_sample=weakest_sample,
                     top_rewrite=top_rewrite,
                     round_delta_highlight=round_delta_highlight,
+                    score_history_highlight=score_history_highlight,
                 ),
                 project.project_id,
             )
@@ -497,9 +566,6 @@ class PublisherPipeline:
                 )
             self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
 
-            history_path = self.writer.project_dir(project.project_id) / "score_history.json"
-            history = load_score_history(history_path, project.project_id)
-            history = append_score_history(history, project, qa, round_id=round_id, mode=mode)
             self.writer.write_json("score_history.json", history, project.project_id)
             self.writer.write_text(
                 "score_history.md",
