@@ -49,6 +49,37 @@ from modules.score_history import (
 )
 
 
+def _weakest_chapter_payload(
+    chapter_json: dict | None, limit: int = 3
+) -> list[dict] | None:
+    """Extract the N weakest chapters from a chapter_review payload.
+
+    Returns ``None`` when chapter data is unavailable so the caller can
+    distinguish "no data" from "no weak chapters". Each entry carries the
+    fields ``render_beginner_summary`` needs: ``index``, ``title``,
+    ``overall`` and ``fix``.
+    """
+
+    if not chapter_json:
+        return None
+    chapters = chapter_json.get("chapters") or []
+    if not chapters:
+        return []
+    flattened: list[dict] = []
+    for chap in chapters:
+        scores = chap.get("scores") or {}
+        flattened.append({
+            "index": chap.get("index"),
+            "title": chap.get("title") or "",
+            "overall": chap.get("overall") or 0,
+            "fix": chap.get("fix") or "",
+            "status": chap.get("status") or "",
+            "scores": scores,
+        })
+    flattened.sort(key=lambda c: (int(c.get("overall") or 0), int(c.get("index") or 0)))
+    return flattened[: max(0, limit)]
+
+
 class PublisherPipeline:
     def __init__(self, config: AppConfig, logger: RunLogger):
         self.config = config
@@ -184,12 +215,11 @@ class PublisherPipeline:
             self.memory.save()
             self.writer.write_json("industrial_qa_report.json", qa, project.project_id)
             self.writer.write_text("industrial_qa_report.md", render_industrial_qa_markdown(qa), project.project_id)
-            self.writer.write_text("beginner_summary.md", render_beginner_summary(project, qa), project.project_id)
             chapter_titles: list[str] = []
+            chapter_json: dict | None = None
+            chapter_md: str | None = None
             try:
                 chapter_md, chapter_json = chapter_review(project)
-                self.writer.write_text("chapter_review.md", chapter_md, project.project_id)
-                self.writer.write_json("chapter_review.json", chapter_json, project.project_id)
                 chapter_titles = [
                     str(c.get("title") or "")
                     for c in (chapter_json.get("chapters") or [])
@@ -201,6 +231,15 @@ class PublisherPipeline:
                     project_id=project.project_id,
                     reason=str(exc),
                 )
+            weakest_chapters = _weakest_chapter_payload(chapter_json, limit=3)
+            self.writer.write_text(
+                "beginner_summary.md",
+                render_beginner_summary(project, qa, weakest_chapters=weakest_chapters),
+                project.project_id,
+            )
+            if chapter_md is not None and chapter_json is not None:
+                self.writer.write_text("chapter_review.md", chapter_md, project.project_id)
+                self.writer.write_json("chapter_review.json", chapter_json, project.project_id)
             try:
                 arc_md, arc_json = chapter_arc_review(project)
                 self.writer.write_text("chapter_arc.md", arc_md, project.project_id)

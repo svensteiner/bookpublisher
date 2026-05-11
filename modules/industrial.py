@@ -483,7 +483,34 @@ def _render_gate_overview(report: dict[str, Any]) -> list[str]:
     return lines
 
 
-def render_beginner_summary(project: BookProject, report: dict[str, Any]) -> str:
+def _render_weakest_chapters(weakest_chapters: list[dict[str, Any]] | None) -> list[str]:
+    """Render the 'Schwächste Kapitel' block from a list of weakest-chapter dicts.
+
+    Each dict is expected to carry ``index``, ``title``, ``overall`` and
+    ``fix`` (matching ``ChapterScore.to_json``). Returns an empty list when
+    no data is provided — the section is then omitted entirely.
+    """
+
+    if not weakest_chapters:
+        return []
+    lines: list[str] = ["## Schwächste Kapitel", ""]
+    for chap in weakest_chapters:
+        title = str(chap.get("title") or f"Kapitel {chap.get('index', '?')}")[:80]
+        index = chap.get("index", "?")
+        score = int(chap.get("overall") or 0)
+        badge, _ = score_badge(score)
+        fix = str(chap.get("fix") or "").strip() or "Kein Fix-Vorschlag verfügbar."
+        lines.append(f"- {badge} **Kapitel {index} — {title}** ({score}/100)")
+        lines.append(f"  Fix: {fix}")
+    lines.append("")
+    return lines
+
+
+def render_beginner_summary(
+    project: BookProject,
+    report: dict[str, Any],
+    weakest_chapters: list[dict[str, Any]] | None = None,
+) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
     gates = _gate_lookup(report)
@@ -536,8 +563,10 @@ def render_beginner_summary(project: BookProject, report: dict[str, Any]) -> str
     else:
         lines.append("Nichts Blockierendes. Mache nur noch eine menschliche Endkontrolle.")
 
+    lines.append("")
+    lines.extend(_render_weakest_chapters(weakest_chapters))
+
     lines.extend([
-        "",
         "## Was bedeutet das praktisch?",
         "",
     ])

@@ -288,6 +288,58 @@ def test_overall_score_line_has_unified_badge():
     assert any(b in score_line for b in badge_chars)
 
 
+def test_render_beginner_summary_weakest_chapters_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    weakest = [
+        {
+            "index": 3,
+            "title": "Kapitelchen Drei",
+            "overall": 42,
+            "fix": "Verankere Kapitel mit Beweis.",
+            "status": "FIX",
+        },
+        {
+            "index": 5,
+            "title": "Kapitel Fünf",
+            "overall": 70,
+            "fix": "Klares Versprechen oben einfügen.",
+            "status": "REVIEW",
+        },
+    ]
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_chapters=weakest
+    )
+    assert "## Schwächste Kapitel" in summary
+    assert "Kapitel 3 — Kapitelchen Drei" in summary
+    assert "42/100" in summary
+    assert "Verankere Kapitel mit Beweis." in summary
+    assert "Kapitel 5 — Kapitel Fünf" in summary
+
+
+def test_render_beginner_summary_weakest_chapters_section_absent_when_empty():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_chapters=None
+    )
+    assert "## Schwächste Kapitel" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_chapters=[]
+    )
+    assert "## Schwächste Kapitel" not in summary_empty
+
+
+def test_render_beginner_summary_weakest_chapters_handles_missing_fields():
+    """Robust against partial dicts — no crash, sensible fallback text."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    weakest = [{"index": 1}]  # no title, no overall, no fix
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_chapters=weakest
+    )
+    assert "## Schwächste Kapitel" in summary
+    assert "Kapitel 1" in summary
+    assert "0/100" in summary
+
+
 def test_render_beginner_summary_handles_empty_gate_list():
     minimal_report = {
         "decision": "GO_AFTER_FIXES",

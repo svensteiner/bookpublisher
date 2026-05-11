@@ -5,10 +5,12 @@ from __future__ import annotations
 from modules.chapters import (
     Chapter,
     ChapterReport,
+    ChapterScore,
     build_chapter_report,
     render_chapter_report_markdown,
     score_chapter,
     split_paragraphs_into_chapters,
+    top_weakest_chapters,
 )
 
 
@@ -152,6 +154,74 @@ def test_render_markdown_handles_empty_report():
     md = render_chapter_report_markdown("Leeres Buch", report)
     assert "Leeres Buch" in md
     assert "keine kapitel" in md.lower()
+
+
+def _score(index: int, overall: int) -> ChapterScore:
+    return ChapterScore(
+        index=index,
+        title=f"K{index}",
+        word_count=500,
+        promise=5,
+        proof=5,
+        value=5,
+        transition=5,
+        overall=overall,
+        status="REVIEW",
+        fix=f"fix-{index}",
+    )
+
+
+def test_top_weakest_chapters_returns_n_lowest_ascending():
+    report = ChapterReport(
+        chapters=[_score(1, 80), _score(2, 40), _score(3, 60), _score(4, 90)],
+        average_score=68,
+        weakest_chapter_index=2,
+    )
+    weakest = top_weakest_chapters(report, limit=3)
+    assert [c.index for c in weakest] == [2, 3, 1]
+    assert [c.overall for c in weakest] == [40, 60, 80]
+
+
+def test_top_weakest_chapters_tie_breaks_by_index():
+    report = ChapterReport(
+        chapters=[_score(3, 50), _score(1, 50), _score(2, 50)],
+        average_score=50,
+        weakest_chapter_index=1,
+    )
+    weakest = top_weakest_chapters(report, limit=2)
+    assert [c.index for c in weakest] == [1, 2]
+
+
+def test_top_weakest_chapters_clamps_limit_to_chapter_count():
+    report = ChapterReport(
+        chapters=[_score(1, 30), _score(2, 60)],
+        average_score=45,
+        weakest_chapter_index=1,
+    )
+    assert len(top_weakest_chapters(report, limit=10)) == 2
+
+
+def test_top_weakest_chapters_handles_empty_and_zero_limit():
+    empty = ChapterReport(chapters=[], average_score=0, weakest_chapter_index=None)
+    assert top_weakest_chapters(empty, limit=3) == []
+    report = ChapterReport(
+        chapters=[_score(1, 30)],
+        average_score=30,
+        weakest_chapter_index=1,
+    )
+    assert top_weakest_chapters(report, limit=0) == []
+
+
+def test_top_weakest_chapters_does_not_mutate_report():
+    chapters = [_score(1, 80), _score(2, 40)]
+    report = ChapterReport(
+        chapters=chapters,
+        average_score=60,
+        weakest_chapter_index=2,
+    )
+    snapshot = [c.index for c in report.chapters]
+    top_weakest_chapters(report, limit=2)
+    assert [c.index for c in report.chapters] == snapshot
 
 
 def test_chapter_report_json_is_serializable():

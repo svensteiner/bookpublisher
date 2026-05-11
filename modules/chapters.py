@@ -282,6 +282,20 @@ class ChapterReport:
         }
 
 
+def top_weakest_chapters(report: ChapterReport, limit: int = 3) -> list[ChapterScore]:
+    """Return the N weakest chapters by overall score (ascending).
+
+    Pure function: never mutates ``report``. ``limit`` is clamped to the
+    actual chapter count so callers don't need to guard against empty
+    manuscripts. Ties are broken by chapter index to keep output stable.
+    """
+
+    if limit <= 0 or not report.chapters:
+        return []
+    ordered = sorted(report.chapters, key=lambda c: (c.overall, c.index))
+    return ordered[: min(limit, len(ordered))]
+
+
 def build_chapter_report(chapters: list[Chapter]) -> ChapterReport:
     """Score every chapter and aggregate into a ChapterReport."""
 
