@@ -8,10 +8,12 @@ must stay isolated so beginner_summary stays trustworthy.
 from __future__ import annotations
 
 from modules.pipeline import (
+    _round_delta_payload,
     _top_rewrite_payload,
     _weakest_chapter_payload,
     _weakest_sample_payload,
 )
+from modules.round_delta import compute_round_delta
 
 
 def _chap(index: int, title: str, overall: int, fix: str = "fix me") -> dict:
@@ -282,3 +284,114 @@ def test_top_rewrite_payload_returns_immutable_safe_dict():
     assert top is not None
     top["text"] = "MUTATED"
     assert src_option["text"] == "Tit"
+
+
+# ─── _round_delta_payload ─────────────────────────────────────────────
+
+
+def _round(
+    round_id: str,
+    score: int,
+    decision: str,
+    fixes: list[str],
+) -> dict:
+    return {
+        "round_id": round_id,
+        "decision": decision,
+        "industrial_score": score,
+        "investor_grade": score / 10,
+        "required_fixes": fixes,
+    }
+
+
+def test_round_delta_payload_returns_none_when_no_delta():
+    assert _round_delta_payload(None) is None
+
+
+def test_round_delta_payload_returns_none_for_first_round():
+    """Round 1 has no previous round — no progress to celebrate."""
+    rounds = [_round("r1", 70, "GO_AFTER_FIXES", ["fix-a", "fix-b"])]
+    delta = compute_round_delta("book", rounds)
+    assert delta is not None
+    assert delta.has_previous is False
+    assert _round_delta_payload(delta) is None
+
+
+def test_round_delta_payload_counts_resolved_persistent_new():
+    rounds = [
+        _round("r1", 70, "GO_AFTER_FIXES", ["fix-a", "fix-b", "fix-c"]),
+        _round("r2", 85, "GO", ["fix-b", "fix-d"]),
+    ]
+    delta = compute_round_delta("book", rounds)
+    payload = _round_delta_payload(delta)
+    assert payload is not None
+    assert payload["resolved_count"] == 2  # fix-a, fix-c
+    assert payload["persistent_count"] == 1  # fix-b
+    assert payload["new_count"] == 1  # fix-d
+    assert payload["score_delta"] == 15
+    assert payload["decision_changed"] is True
+    assert payload["previous_decision"] == "GO_AFTER_FIXES"
+    assert payload["current_decision"] == "GO"
+
+
+def test_round_delta_payload_caps_top_fix_lists():
+    rounds = [
+        _round("r1", 70, "GO_AFTER_FIXES", ["a", "b", "c", "d", "e"]),
+        _round("r2", 80, "GO_AFTER_FIXES", ["a", "b"]),  # c, d, e resolved
+    ]
+    delta = compute_round_delta("book", rounds)
+    payload = _round_delta_payload(delta, fix_limit=2)
+    assert payload is not None
+    assert payload["top_resolved"] == ["c", "d"]  # capped to 2
+    assert payload["top_persistent"] == ["a", "b"]
+    assert payload["resolved_count"] == 3  # but count reflects all
+
+
+def test_round_delta_payload_zero_fix_limit_empties_lists():
+    rounds = [
+        _round("r1", 70, "GO_AFTER_FIXES", ["a", "b"]),
+        _round("r2", 75, "GO_AFTER_FIXES", []),
+    ]
+    delta = compute_round_delta("book", rounds)
+    payload = _round_delta_payload(delta, fix_limit=0)
+    assert payload is not None
+    assert payload["top_resolved"] == []
+    assert payload["resolved_count"] == 2
+
+
+def test_round_delta_payload_score_drop_reported_as_negative():
+    rounds = [
+        _round("r1", 85, "GO", []),
+        _round("r2", 70, "GO_AFTER_FIXES", ["regression"]),
+    ]
+    delta = compute_round_delta("book", rounds)
+    payload = _round_delta_payload(delta)
+    assert payload is not None
+    assert payload["score_delta"] == -15
+    assert payload["new_count"] == 1
+    assert payload["decision_changed"] is True
+
+
+def test_round_delta_payload_decision_unchanged_flag_false():
+    rounds = [
+        _round("r1", 70, "GO_AFTER_FIXES", ["a"]),
+        _round("r2", 72, "GO_AFTER_FIXES", ["a"]),
+    ]
+    delta = compute_round_delta("book", rounds)
+    payload = _round_delta_payload(delta)
+    assert payload is not None
+    assert payload["decision_changed"] is False
+
+
+def test_round_delta_payload_does_not_mutate_delta_tuples():
+    """Returned lists are independent — mutating the payload must not affect the delta."""
+    rounds = [
+        _round("r1", 70, "GO_AFTER_FIXES", ["a", "b"]),
+        _round("r2", 75, "GO_AFTER_FIXES", []),
+    ]
+    delta = compute_round_delta("book", rounds)
+    payload = _round_delta_payload(delta)
+    assert payload is not None
+    payload["top_resolved"].append("MUTATED")
+    # Re-querying the delta tuple must still be clean
+    assert "MUTATED" not in delta.resolved_fixes

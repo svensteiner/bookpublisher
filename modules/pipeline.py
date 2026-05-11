@@ -38,7 +38,7 @@ from modules.release_assets import (
     render_kindle_preview_check,
 )
 from modules.rewrites import build_rewrite_report, render_rewrite_report_markdown
-from modules.round_delta import render_round_delta_markdown
+from modules.round_delta import RoundDelta, render_round_delta_markdown
 from modules.rounds import make_round_id, snapshot_round
 from modules.run_logger import RunLogger
 from modules.sample_scan import build_sample_scan_report, render_sample_scan_markdown
@@ -135,6 +135,41 @@ def _top_rewrite_payload(rewrite_json: dict | None) -> dict | None:
         return None
     candidates.sort(key=lambda item: (item[0], item[1], item[2]))
     return candidates[0][3]
+
+
+def _round_delta_payload(
+    delta: RoundDelta | None,
+    *,
+    fix_limit: int = 2,
+) -> dict | None:
+    """Compact round-over-round progress signal for beginner_summary.
+
+    Returns ``None`` when there is no previous round to compare against —
+    round 1 has nothing to celebrate, so the section should be omitted
+    entirely. Otherwise returns a dict the renderer can consume without
+    re-reading round_delta data.
+
+    Caps ``top_resolved`` and ``top_persistent`` to ``fix_limit`` items so
+    the highlight stays short — the full round_delta.md remains the
+    source of truth for the complete list.
+    """
+
+    if delta is None or not delta.has_previous:
+        return None
+    previous = delta.previous_round or {}
+    current = delta.current_round
+    limit = max(0, fix_limit)
+    return {
+        "resolved_count": len(delta.resolved_fixes),
+        "persistent_count": len(delta.persistent_fixes),
+        "new_count": len(delta.new_fixes),
+        "score_delta": delta.score_delta,
+        "decision_changed": delta.decision_changed,
+        "previous_decision": previous.get("decision"),
+        "current_decision": current.get("decision"),
+        "top_resolved": list(delta.resolved_fixes[:limit]),
+        "top_persistent": list(delta.persistent_fixes[:limit]),
+    }
 
 
 def _weakest_sample_payload(sample_json: dict | None) -> dict | None:
@@ -334,6 +369,8 @@ class PublisherPipeline:
             rewrite_report = build_rewrite_report(project)
             rewrite_json = rewrite_report.to_json()
             top_rewrite = _top_rewrite_payload(rewrite_json)
+            delta = self.memory.compare_rounds(project.project_id, current_round_id=round_id)
+            round_delta_highlight = _round_delta_payload(delta)
             self.writer.write_text(
                 "beginner_summary.md",
                 render_beginner_summary(
@@ -342,6 +379,7 @@ class PublisherPipeline:
                     weakest_chapters=weakest_chapters,
                     weakest_sample=weakest_sample,
                     top_rewrite=top_rewrite,
+                    round_delta_highlight=round_delta_highlight,
                 ),
                 project.project_id,
             )
@@ -475,7 +513,6 @@ class PublisherPipeline:
                 industrial_score=qa.get("industrial_score"),
             )
 
-            delta = self.memory.compare_rounds(project.project_id, current_round_id=round_id)
             if delta is not None:
                 self.writer.write_text(
                     "round_delta.md",

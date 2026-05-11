@@ -451,6 +451,107 @@ def test_render_beginner_summary_top_rewrite_handles_missing_motivation():
     assert "Warum:" not in summary
 
 
+def test_render_beginner_summary_round_delta_highlight_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "resolved_count": 3,
+        "persistent_count": 1,
+        "new_count": 2,
+        "score_delta": 15,
+        "decision_changed": True,
+        "previous_decision": "GO_AFTER_FIXES",
+        "current_decision": "GO",
+        "top_resolved": ["Cover-Format korrigiert.", "Beschreibung gekürzt."],
+        "top_persistent": ["7 Amazon-Keywords festlegen."],
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, round_delta_highlight=highlight
+    )
+    assert "## Runden-Fortschritt" in summary
+    assert "3 Fix(es) umgesetzt" in summary
+    assert "1 Fix(es) weiterhin offen" in summary
+    assert "2 neue(r) Fix(es)" in summary
+    assert "+15 Punkte" in summary
+    assert "GO_AFTER_FIXES → **GO**" in summary
+    assert "Cover-Format korrigiert." in summary
+    assert "7 Amazon-Keywords festlegen." in summary
+    assert "`round_delta.md`" in summary
+
+
+def test_render_beginner_summary_round_delta_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, round_delta_highlight=None
+    )
+    assert "## Runden-Fortschritt" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, round_delta_highlight={}
+    )
+    assert "## Runden-Fortschritt" not in summary_empty
+
+
+def test_render_beginner_summary_round_delta_handles_missing_fields():
+    """Robust against partial payloads — no crash, sensible defaults."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {"resolved_count": 0}  # minimal
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, round_delta_highlight=highlight
+    )
+    assert "## Runden-Fortschritt" in summary
+    assert "0 Fix(es) umgesetzt" in summary
+    assert "0 Fix(es) weiterhin offen" in summary
+    # decision_changed False ⇒ no Entscheidung line
+    assert "🔁 Entscheidung" not in summary
+    # No score_delta ⇒ "kein Vergleich möglich"
+    assert "kein Vergleich möglich" in summary
+
+
+def test_render_beginner_summary_round_delta_negative_score_uses_fix_badge():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "resolved_count": 0,
+        "persistent_count": 3,
+        "new_count": 1,
+        "score_delta": -10,
+        "decision_changed": False,
+        "previous_decision": "GO_AFTER_FIXES",
+        "current_decision": "GO_AFTER_FIXES",
+        "top_resolved": [],
+        "top_persistent": [],
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, round_delta_highlight=highlight
+    )
+    assert "## Runden-Fortschritt" in summary
+    assert "-10 Punkte" in summary
+    # The negative-score badge line should be present
+    assert SCORE_BADGE_FIX in summary
+    # No "Erledigt seit der Vorrunde" block when top_resolved is empty
+    assert "Erledigt seit der Vorrunde" not in summary
+
+
+def test_render_beginner_summary_round_delta_zero_score_delta():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "resolved_count": 1,
+        "persistent_count": 1,
+        "new_count": 0,
+        "score_delta": 0,
+        "decision_changed": False,
+        "previous_decision": "GO_AFTER_FIXES",
+        "current_decision": "GO_AFTER_FIXES",
+        "top_resolved": ["Eine Sache erledigt."],
+        "top_persistent": ["Eine bleibt offen."],
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, round_delta_highlight=highlight
+    )
+    assert "## Runden-Fortschritt" in summary
+    assert "±0 Punkte" in summary
+    assert "Erledigt seit der Vorrunde" in summary
+    assert "Weiterhin offen — jetzt anpacken" in summary
+
+
 def test_render_beginner_summary_handles_empty_gate_list():
     minimal_report = {
         "decision": "GO_AFTER_FIXES",

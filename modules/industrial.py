@@ -560,6 +560,79 @@ def _render_top_rewrite(top_rewrite: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def _render_round_delta_highlight(
+    highlight: dict[str, Any] | None,
+) -> list[str]:
+    """Render the 'Runden-Fortschritt' block from a round-delta highlight.
+
+    Surfaces the most motivating signal from the previous round: did the
+    author resolve the fixes we flagged last time, did the score move,
+    did the decision change? Skips the section entirely when there is no
+    previous round to compare against — round 1 has nothing to celebrate.
+
+    The dict is expected to carry ``resolved_count``, ``persistent_count``,
+    ``new_count``, ``score_delta`` (int | None), ``decision_changed``,
+    ``previous_decision``, ``current_decision``, ``top_resolved`` (list of
+    fix strings, already capped) and ``top_persistent`` (list of fix
+    strings, already capped). All counts default to 0 when missing so
+    partial payloads do not crash the renderer.
+    """
+
+    if not highlight:
+        return []
+    resolved = int(highlight.get("resolved_count") or 0)
+    persistent = int(highlight.get("persistent_count") or 0)
+    new_count = int(highlight.get("new_count") or 0)
+    score_delta = highlight.get("score_delta")
+    decision_changed = bool(highlight.get("decision_changed"))
+    previous_decision = str(highlight.get("previous_decision") or "").strip()
+    current_decision = str(highlight.get("current_decision") or "").strip()
+    top_resolved = [str(item).strip() for item in (highlight.get("top_resolved") or []) if str(item).strip()]
+    top_persistent = [str(item).strip() for item in (highlight.get("top_persistent") or []) if str(item).strip()]
+
+    if isinstance(score_delta, (int, float)):
+        if score_delta > 0:
+            score_badge_emoji = SCORE_BADGE_READY
+            score_text = f"Score: **+{int(score_delta)} Punkte** seit der Vorrunde"
+        elif score_delta < 0:
+            score_badge_emoji = SCORE_BADGE_FIX
+            score_text = f"Score: **{int(score_delta)} Punkte** seit der Vorrunde"
+        else:
+            score_badge_emoji = SCORE_BADGE_REVIEW
+            score_text = "Score: **±0 Punkte** seit der Vorrunde"
+    else:
+        score_badge_emoji = SCORE_BADGE_REVIEW
+        score_text = "Score: kein Vergleich möglich"
+
+    lines: list[str] = [
+        "## Runden-Fortschritt",
+        "",
+        "Was hat sich seit der letzten Prüfrunde geändert?",
+        "",
+        f"- {SCORE_BADGE_READY} **{resolved} Fix(es) umgesetzt**",
+        f"- {SCORE_BADGE_REVIEW} {persistent} Fix(es) weiterhin offen",
+        f"- {SCORE_BADGE_FIX} {new_count} neue(r) Fix(es)",
+        f"- {score_badge_emoji} {score_text}",
+    ]
+    if decision_changed and previous_decision and current_decision:
+        lines.append(f"- 🔁 Entscheidung: {previous_decision} → **{current_decision}**")
+    lines.append("")
+
+    if top_resolved:
+        lines.append("**Erledigt seit der Vorrunde:**")
+        lines.extend(f"- ✅ {item}" for item in top_resolved)
+        lines.append("")
+    if top_persistent:
+        lines.append("**Weiterhin offen — jetzt anpacken:**")
+        lines.extend(f"- ⚠️ {item}" for item in top_persistent)
+        lines.append("")
+    lines.extend([
+        "Details siehe `round_delta.md`.",
+        "",
+    ])
+    return lines
+
+
 def _render_weakest_sample(weakest_sample: dict[str, Any] | None) -> list[str]:
     """Render the 'Schwächster Sample-Abschnitt' block.
 
@@ -597,6 +670,7 @@ def render_beginner_summary(
     weakest_chapters: list[dict[str, Any]] | None = None,
     weakest_sample: dict[str, Any] | None = None,
     top_rewrite: dict[str, Any] | None = None,
+    round_delta_highlight: dict[str, Any] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -651,6 +725,7 @@ def render_beginner_summary(
         lines.append("Nichts Blockierendes. Mache nur noch eine menschliche Endkontrolle.")
 
     lines.append("")
+    lines.extend(_render_round_delta_highlight(round_delta_highlight))
     lines.extend(_render_weakest_chapters(weakest_chapters))
     lines.extend(_render_weakest_sample(weakest_sample))
     lines.extend(_render_top_rewrite(top_rewrite))
