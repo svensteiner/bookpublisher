@@ -3,6 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from modules.chapter_arc import (
+    ArcReport,
+    build_arc_report,
+    render_arc_report_markdown,
+)
 from modules.chapters import (
     ChapterReport,
     build_chapter_report,
@@ -213,6 +218,22 @@ def chapter_review(project: BookProject) -> tuple[str, dict]:
     report = build_chapter_report(chapters)
     title = project.title or project.project_id
     return render_chapter_report_markdown(title, report), report.to_json()
+
+
+def chapter_arc_review(project: BookProject) -> tuple[str, dict]:
+    """Kapitel-Reihungscheck. Returns (markdown, json_payload).
+
+    Pure-Python; safe to call in QA mode without an LLM API key.
+    Returns an empty report if no manuscript is available so callers
+    can write an artifact instead of failing the pipeline.
+    """
+
+    if not project.manuscript:
+        empty = build_arc_report([])
+        return render_arc_report_markdown(project, empty), empty.to_json()
+    chapters = extract_docx_chapters(project.manuscript)
+    report = build_arc_report(chapters)
+    return render_arc_report_markdown(project, report), report.to_json()
 
 
 def executive_summary(project: BookProject, context: str, llm: LLMClient) -> str:

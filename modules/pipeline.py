@@ -17,6 +17,7 @@ from modules.kdp_keywords import build_kdp_keywords, render_kdp_keywords_report_
 from modules.llm import LLMClient
 from modules.review import (
     amazon_review,
+    chapter_arc_review,
     chapter_review,
     checklist,
     executive_summary,
@@ -171,6 +172,23 @@ class PublisherPipeline:
                     project_id=project.project_id,
                     reason=str(exc),
                 )
+            try:
+                arc_md, arc_json = chapter_arc_review(project)
+                self.writer.write_text("chapter_arc.md", arc_md, project.project_id)
+                self.writer.write_json("chapter_arc.json", arc_json, project.project_id)
+                self.logger.log(
+                    "chapter_arc_completed",
+                    project_id=project.project_id,
+                    arc_score=arc_json.get("arc_score"),
+                    inversions=len(arc_json.get("inversions") or []),
+                    missing_phases=arc_json.get("missing_phases") or [],
+                )
+            except RuntimeError as exc:
+                self.logger.log(
+                    "chapter_arc_skipped",
+                    project_id=project.project_id,
+                    reason=str(exc),
+                )
             self.writer.write_text("kindle_preview_check.md", render_kindle_preview_check(project), project.project_id)
             self.writer.write_text("amazon_research_brief.md", render_amazon_research_brief(project), project.project_id)
             self.writer.write_text("competitor_research_template.csv", render_competitor_template_csv(project), project.project_id)
@@ -281,6 +299,8 @@ class PublisherPipeline:
             "beginner_summary.md",
             "chapter_review.md",
             "chapter_review.json",
+            "chapter_arc.md",
+            "chapter_arc.json",
             "kindle_preview_check.md",
             "amazon_research_brief.md",
             "competitor_research_template.csv",

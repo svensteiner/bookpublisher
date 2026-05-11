@@ -23,6 +23,8 @@ QUICK_ROUND_ARTIFACTS = [
     "round_delta.json",
     "chapter_review.md",
     "chapter_review.json",
+    "chapter_arc.md",
+    "chapter_arc.json",
     "rewrite_suggestions.md",
     "rewrite_suggestions.json",
     "amazon_description.html",
