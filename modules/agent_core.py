@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from modules.discovery import BookProject
+from modules.round_delta import RoundDelta, compute_round_delta
 
 
 class SkillRegistry:
@@ -132,6 +133,21 @@ class AgentMemory:
             "project_memory": self.project_memory(project_id),
         }
         return "# Agent Memory\n" + json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+
+    def compare_rounds(
+        self,
+        project_id: str,
+        current_round_id: str | None = None,
+        previous_round_id: str | None = None,
+    ) -> RoundDelta | None:
+        memory = self.project_memory(project_id)
+        rounds = memory.get("rounds") or []
+        return compute_round_delta(
+            project_id,
+            list(rounds),
+            current_round_id=current_round_id,
+            previous_round_id=previous_round_id,
+        )
 
     def snapshot(self, project_id: str) -> dict[str, Any]:
         return {

@@ -32,6 +32,7 @@ from modules.release_assets import (
     render_kindle_preview_check,
 )
 from modules.rewrites import build_rewrite_report, render_rewrite_report_markdown
+from modules.round_delta import render_round_delta_markdown
 from modules.rounds import make_round_id, snapshot_round
 from modules.run_logger import RunLogger
 from modules.sample_scan import build_sample_scan_report, render_sample_scan_markdown
@@ -220,6 +221,27 @@ class PublisherPipeline:
                     reason=str(exc),
                 )
             self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
+            delta = self.memory.compare_rounds(project.project_id, current_round_id=round_id)
+            if delta is not None:
+                self.writer.write_text(
+                    "round_delta.md",
+                    render_round_delta_markdown(project, delta),
+                    project.project_id,
+                )
+                self.writer.write_json(
+                    "round_delta.json",
+                    delta.to_json(),
+                    project.project_id,
+                )
+                self.logger.log(
+                    "round_delta_recorded",
+                    project_id=project.project_id,
+                    has_previous=delta.has_previous,
+                    score_delta=delta.score_delta,
+                    resolved_count=len(delta.resolved_fixes),
+                    persistent_count=len(delta.persistent_fixes),
+                    new_count=len(delta.new_fixes),
+                )
             self.logger.log(
                 "industrial_qa_completed",
                 project_id=project.project_id,
@@ -245,6 +267,8 @@ class PublisherPipeline:
             "sample_scan.md",
             "sample_scan.json",
             "agent_memory_snapshot.json",
+            "round_delta.md",
+            "round_delta.json",
         ]:
             self._mirror_if_single(projects, filename)
         return projects

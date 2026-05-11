@@ -19,6 +19,8 @@ QUICK_ROUND_ARTIFACTS = [
     "competitor_research_template.csv",
     "cover_review.md",
     "agent_memory_snapshot.json",
+    "round_delta.md",
+    "round_delta.json",
 ]
 
 FULL_ROUND_ARTIFACTS = [
