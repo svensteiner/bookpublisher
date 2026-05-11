@@ -340,6 +340,51 @@ def test_render_beginner_summary_weakest_chapters_handles_missing_fields():
     assert "0/100" in summary
 
 
+def test_render_beginner_summary_weakest_sample_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    weakest = {
+        "index": 2,
+        "label": "Eroeffnung",
+        "overall": 48,
+        "status": "FIX",
+        "risk": "ABBRUCH-RISIKO",
+        "fix": "Setze einen Hook-Satz mit konkreter Zahl an den Anfang.",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_sample=weakest
+    )
+    assert "## Schwächster Sample-Abschnitt" in summary
+    assert "Abschnitt 2 — Eroeffnung" in summary
+    assert "48/100" in summary
+    assert "ABBRUCH-RISIKO" in summary
+    assert "Setze einen Hook-Satz" in summary
+
+
+def test_render_beginner_summary_weakest_sample_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_sample=None
+    )
+    assert "## Schwächster Sample-Abschnitt" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_sample={}
+    )
+    assert "## Schwächster Sample-Abschnitt" not in summary_empty
+
+
+def test_render_beginner_summary_weakest_sample_handles_missing_fields():
+    """Robust against partial payloads — no crash, sensible fallback."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    weakest = {"index": 1}
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_sample=weakest
+    )
+    assert "## Schwächster Sample-Abschnitt" in summary
+    assert "Abschnitt 1" in summary
+    assert "0/100" in summary
+    assert "Kein Fix-Vorschlag" in summary
+
+
 def test_render_beginner_summary_handles_empty_gate_list():
     minimal_report = {
         "decision": "GO_AFTER_FIXES",

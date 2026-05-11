@@ -7,7 +7,7 @@ must stay isolated so beginner_summary stays trustworthy.
 
 from __future__ import annotations
 
-from modules.pipeline import _weakest_chapter_payload
+from modules.pipeline import _weakest_chapter_payload, _weakest_sample_payload
 
 
 def _chap(index: int, title: str, overall: int, fix: str = "fix me") -> dict:
@@ -63,3 +63,77 @@ def test_weakest_chapter_payload_tolerates_partial_chapter_dicts():
     assert weakest[0]["overall"] == 0
     assert weakest[0]["title"] == ""
     assert weakest[0]["fix"] == ""
+
+
+def _section(
+    index: int,
+    overall: int,
+    status: str,
+    *,
+    label: str = "Abschnitt",
+    fix: str = "fix me",
+    risk: str = "RISK",
+) -> dict:
+    return {
+        "index": index,
+        "label": label,
+        "overall": overall,
+        "status": status,
+        "risk": risk,
+        "fix": fix,
+    }
+
+
+def test_weakest_sample_payload_returns_none_when_no_report():
+    assert _weakest_sample_payload(None) is None
+
+
+def test_weakest_sample_payload_returns_none_when_no_sections():
+    assert _weakest_sample_payload({"sections": []}) is None
+    assert _weakest_sample_payload({}) is None
+
+
+def test_weakest_sample_payload_returns_none_when_all_ready():
+    payload = {
+        "sections": [
+            _section(1, 90, "READY"),
+            _section(2, 88, "READY"),
+        ]
+    }
+    assert _weakest_sample_payload(payload) is None
+
+
+def test_weakest_sample_payload_picks_lowest_scoring_risky_section():
+    payload = {
+        "sections": [
+            _section(1, 80, "REVIEW", label="Auftakt", fix="fix-1"),
+            _section(2, 40, "FIX", label="Eroeffnung", fix="fix-2", risk="ABBRUCH-RISIKO"),
+            _section(3, 70, "REVIEW", label="Methode", fix="fix-3"),
+        ]
+    }
+    weakest = _weakest_sample_payload(payload)
+    assert weakest is not None
+    assert weakest["index"] == 2
+    assert weakest["label"] == "Eroeffnung"
+    assert weakest["overall"] == 40
+    assert weakest["status"] == "FIX"
+    assert weakest["risk"] == "ABBRUCH-RISIKO"
+    assert weakest["fix"] == "fix-2"
+
+
+def test_weakest_sample_payload_tolerates_partial_section_dicts():
+    payload = {"sections": [{"index": 1, "status": "FIX"}]}
+    weakest = _weakest_sample_payload(payload)
+    assert weakest is not None
+    assert weakest["index"] == 1
+    assert weakest["overall"] == 0
+    assert weakest["label"] == ""
+    assert weakest["fix"] == ""
+
+
+def test_weakest_sample_payload_treats_missing_status_as_risky():
+    """Defensive: a section without a status field should not be suppressed."""
+    payload = {"sections": [_section(1, 50, "")]}
+    weakest = _weakest_sample_payload(payload)
+    assert weakest is not None
+    assert weakest["overall"] == 50

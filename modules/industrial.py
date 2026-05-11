@@ -506,10 +506,42 @@ def _render_weakest_chapters(weakest_chapters: list[dict[str, Any]] | None) -> l
     return lines
 
 
+def _render_weakest_sample(weakest_sample: dict[str, Any] | None) -> list[str]:
+    """Render the 'Schwächster Sample-Abschnitt' block.
+
+    The dict is expected to carry ``index``, ``label``, ``overall``,
+    ``risk`` and ``fix`` (matching ``SampleSectionScore.to_json``).
+    Returns an empty list when no risk data is provided so the section is
+    omitted entirely — keeping the summary clean when the Kindle-Sample
+    has no drop-off risk.
+    """
+
+    if not weakest_sample:
+        return []
+    label = str(weakest_sample.get("label") or "").strip()
+    index = weakest_sample.get("index", "?")
+    score = int(weakest_sample.get("overall") or 0)
+    risk = str(weakest_sample.get("risk") or "").strip()
+    fix = str(weakest_sample.get("fix") or "").strip() or "Kein Fix-Vorschlag verfügbar."
+    badge, _ = score_badge(score)
+    headline = label or f"Abschnitt {index}"
+    risk_suffix = f" — {risk}" if risk else ""
+    return [
+        "## Schwächster Sample-Abschnitt",
+        "",
+        "Hier bricht der Kindle-Leser am ehesten ab. Fixe diesen Abschnitt zuerst.",
+        "",
+        f"- {badge} **Abschnitt {index} — {headline}** ({score}/100){risk_suffix}",
+        f"  Fix: {fix}",
+        "",
+    ]
+
+
 def render_beginner_summary(
     project: BookProject,
     report: dict[str, Any],
     weakest_chapters: list[dict[str, Any]] | None = None,
+    weakest_sample: dict[str, Any] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -565,6 +597,7 @@ def render_beginner_summary(
 
     lines.append("")
     lines.extend(_render_weakest_chapters(weakest_chapters))
+    lines.extend(_render_weakest_sample(weakest_sample))
 
     lines.extend([
         "## Was bedeutet das praktisch?",

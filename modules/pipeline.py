@@ -80,6 +80,36 @@ def _weakest_chapter_payload(
     return flattened[: max(0, limit)]
 
 
+def _weakest_sample_payload(sample_json: dict | None) -> dict | None:
+    """Extract the highest-risk Kindle-Sample section from a sample-scan payload.
+
+    Returns ``None`` when no sample data is available, no sections were
+    scored, or the weakest section is already ``READY`` (no drop-off
+    risk worth surfacing in beginner_summary). When a risky section
+    exists, returns a dict with ``index``, ``label``, ``overall``,
+    ``status``, ``risk`` and ``fix`` — the fields
+    ``render_beginner_summary`` needs.
+    """
+
+    if not sample_json:
+        return None
+    sections = sample_json.get("sections") or []
+    if not sections:
+        return None
+    weakest = min(sections, key=lambda s: int(s.get("overall") or 0))
+    status = str(weakest.get("status") or "").upper()
+    if status == "READY":
+        return None
+    return {
+        "index": weakest.get("index"),
+        "label": weakest.get("label") or "",
+        "overall": int(weakest.get("overall") or 0),
+        "status": status,
+        "risk": weakest.get("risk") or "",
+        "fix": weakest.get("fix") or "",
+    }
+
+
 class PublisherPipeline:
     def __init__(self, config: AppConfig, logger: RunLogger):
         self.config = config
@@ -232,9 +262,26 @@ class PublisherPipeline:
                     reason=str(exc),
                 )
             weakest_chapters = _weakest_chapter_payload(chapter_json, limit=3)
+            sample_json: dict | None = None
+            try:
+                sample_scan = build_sample_scan_report(project)
+                sample_json = sample_scan.to_json()
+            except RuntimeError as exc:
+                sample_scan = None
+                self.logger.log(
+                    "sample_scan_skipped",
+                    project_id=project.project_id,
+                    reason=str(exc),
+                )
+            weakest_sample = _weakest_sample_payload(sample_json)
             self.writer.write_text(
                 "beginner_summary.md",
-                render_beginner_summary(project, qa, weakest_chapters=weakest_chapters),
+                render_beginner_summary(
+                    project,
+                    qa,
+                    weakest_chapters=weakest_chapters,
+                    weakest_sample=weakest_sample,
+                ),
                 project.project_id,
             )
             if chapter_md is not None and chapter_json is not None:
@@ -339,8 +386,7 @@ class PublisherPipeline:
                 {"keywords": [kw.to_json() for kw in kdp_keywords]},
                 project.project_id,
             )
-            try:
-                sample_scan = build_sample_scan_report(project)
+            if sample_scan is not None and sample_json is not None:
                 self.writer.write_text(
                     "sample_scan.md",
                     render_sample_scan_markdown(project, sample_scan),
@@ -348,14 +394,8 @@ class PublisherPipeline:
                 )
                 self.writer.write_json(
                     "sample_scan.json",
-                    sample_scan.to_json(),
+                    sample_json,
                     project.project_id,
-                )
-            except RuntimeError as exc:
-                self.logger.log(
-                    "sample_scan_skipped",
-                    project_id=project.project_id,
-                    reason=str(exc),
                 )
             self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
 
