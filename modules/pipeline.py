@@ -12,6 +12,7 @@ from modules.industrial import build_industrial_qa, render_beginner_summary, ren
 from modules.llm import LLMClient
 from modules.review import (
     amazon_review,
+    chapter_review,
     checklist,
     executive_summary,
     launch_content,
@@ -142,6 +143,16 @@ class PublisherPipeline:
             self.writer.write_json("industrial_qa_report.json", qa, project.project_id)
             self.writer.write_text("industrial_qa_report.md", render_industrial_qa_markdown(qa), project.project_id)
             self.writer.write_text("beginner_summary.md", render_beginner_summary(project, qa), project.project_id)
+            try:
+                chapter_md, chapter_json = chapter_review(project)
+                self.writer.write_text("chapter_review.md", chapter_md, project.project_id)
+                self.writer.write_json("chapter_review.json", chapter_json, project.project_id)
+            except RuntimeError as exc:
+                self.logger.log(
+                    "chapter_review_skipped",
+                    project_id=project.project_id,
+                    reason=str(exc),
+                )
             self.writer.write_text("kindle_preview_check.md", render_kindle_preview_check(project), project.project_id)
             self.writer.write_text("amazon_research_brief.md", render_amazon_research_brief(project), project.project_id)
             self.writer.write_text("competitor_research_template.csv", render_competitor_template_csv(project), project.project_id)
@@ -156,6 +167,8 @@ class PublisherPipeline:
             "industrial_qa_report.json",
             "industrial_qa_report.md",
             "beginner_summary.md",
+            "chapter_review.md",
+            "chapter_review.json",
             "kindle_preview_check.md",
             "amazon_research_brief.md",
             "competitor_research_template.csv",

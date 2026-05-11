@@ -52,6 +52,14 @@ def describe_zip(path: Path) -> dict:
         return {"path": str(path), "error": "bad_zip_file"}
 
 
+def read_docx_chapters(path: Path) -> list:
+    """Re-export of modules.chapters.extract_docx_chapters for convenience."""
+
+    from modules.chapters import extract_docx_chapters
+
+    return extract_docx_chapters(path)
+
+
 def read_any_text(path: Path) -> str:
     ext = path.suffix.lower()
     if ext == ".docx":

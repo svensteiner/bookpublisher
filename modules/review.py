@@ -3,6 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from modules.chapters import (
+    ChapterReport,
+    build_chapter_report,
+    extract_docx_chapters,
+    render_chapter_report_markdown,
+)
 from modules.config import AppConfig
 from modules.discovery import BookProject
 from modules.llm import LLMClient
@@ -191,6 +197,22 @@ def launch_content(project: BookProject, config: AppConfig, llm: LLMClient) -> s
         SYSTEM_PROMPT,
         LAUNCH_PROMPT.format(context=trim_text(context, config.max_manuscript_chars)),
     )
+
+
+def chapter_review(project: BookProject) -> tuple[str, dict]:
+    """Per-chapter heuristic review. Returns (markdown, json_payload).
+
+    Pure-Python; safe to call in QA mode without an LLM API key.
+    """
+
+    if not project.manuscript:
+        empty = ChapterReport(chapters=[], average_score=0, weakest_chapter_index=None)
+        title = project.title or project.project_id
+        return render_chapter_report_markdown(title, empty), empty.to_json()
+    chapters = extract_docx_chapters(project.manuscript)
+    report = build_chapter_report(chapters)
+    title = project.title or project.project_id
+    return render_chapter_report_markdown(title, report), report.to_json()
 
 
 def executive_summary(project: BookProject, context: str, llm: LLMClient) -> str:
