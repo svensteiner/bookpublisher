@@ -10,8 +10,18 @@ Designed to run fully offline so tests don't need an LLM or filesystem.
 from __future__ import annotations
 
 import re
+import statistics
 from dataclasses import dataclass, field
 from typing import Any, Iterable
+
+# Word-count balance thresholds. A chapter is flagged as a SPLIT candidate
+# when its word count exceeds the median by ``OVERSIZED_FACTOR`` and as a
+# MERGE candidate when it falls below the median by ``UNDERSIZED_FACTOR``.
+# Below ``BALANCE_MIN_CHAPTERS`` chapters the median is not meaningful, so
+# the balance analysis returns an empty report.
+OVERSIZED_FACTOR: float = 3.0
+UNDERSIZED_FACTOR: float = 0.3
+BALANCE_MIN_CHAPTERS: int = 3
 
 # Heading style markers used by Word in German + English templates.
 HEADING_STYLE_TOKENS: tuple[str, ...] = ("heading", "überschrift", "uberschrift")
@@ -267,19 +277,155 @@ def score_chapter(chapter: Chapter) -> ChapterScore:
 
 
 @dataclass(frozen=True)
+class ChapterBalanceOutlier:
+    """A chapter whose word count diverges sharply from the median.
+
+    ``kind`` is either ``"oversized"`` (split candidate) or
+    ``"undersized"`` (merge candidate). ``ratio`` is the multiple of the
+    median word count, rounded to one decimal — surfaced to the author
+    so they immediately see "Kapitel X ist 4.2× so lang wie der
+    Durchschnitt".
+    """
+
+    index: int
+    title: str
+    word_count: int
+    median: int
+    ratio: float
+    kind: str
+    fix: str
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "title": self.title,
+            "word_count": self.word_count,
+            "median": self.median,
+            "ratio": self.ratio,
+            "kind": self.kind,
+            "fix": self.fix,
+        }
+
+
+@dataclass(frozen=True)
+class ChapterBalanceReport:
+    """Aggregate of word-count outliers for a chapter set."""
+
+    median_word_count: int
+    oversized: list[ChapterBalanceOutlier] = field(default_factory=list)
+    undersized: list[ChapterBalanceOutlier] = field(default_factory=list)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "median_word_count": self.median_word_count,
+            "oversized": [o.to_json() for o in self.oversized],
+            "undersized": [o.to_json() for o in self.undersized],
+        }
+
+    @property
+    def has_findings(self) -> bool:
+        return bool(self.oversized) or bool(self.undersized)
+
+
+def _balance_fix(chapter: Chapter, kind: str, ratio: float) -> str:
+    title = chapter.title.strip() or f"Kapitel {chapter.index}"
+    ratio_str = f"{ratio:.1f}×".replace(".0×", "×")
+    if kind == "oversized":
+        return (
+            f"'{title}' ist {ratio_str} so lang wie der Durchschnitt "
+            f"({chapter.word_count} Woerter). Erwaege das Kapitel in zwei "
+            "Teile zu splitten — z.B. ein eigenes Kapitel fuer den "
+            "Beweisteil oder das Praxisbeispiel."
+        )
+    return (
+        f"'{title}' ist nur {ratio_str} der durchschnittlichen Laenge "
+        f"({chapter.word_count} Woerter). Erwaege das Kapitel mit einem "
+        "benachbarten Thema zusammenzulegen, damit der Leser einen "
+        "echten Block bekommt."
+    )
+
+
+def analyze_chapter_balance(
+    chapters: list[Chapter],
+    *,
+    oversized_factor: float = OVERSIZED_FACTOR,
+    undersized_factor: float = UNDERSIZED_FACTOR,
+    min_chapters: int = BALANCE_MIN_CHAPTERS,
+) -> ChapterBalanceReport:
+    """Detect chapters whose word count diverges sharply from the median.
+
+    Pure function: never mutates ``chapters``. Returns an empty report
+    when there are fewer than ``min_chapters`` real chapters, when the
+    median word count is zero, or when no outliers are found. Outliers
+    are returned in deterministic order: oversized by decreasing word
+    count (split the longest first), undersized by ascending word count
+    (merge the shortest first). Ties break by chapter index.
+    """
+
+    real = [c for c in chapters if c.word_count > 0]
+    if len(real) < min_chapters:
+        return ChapterBalanceReport(median_word_count=0)
+    median = int(statistics.median(c.word_count for c in real))
+    if median <= 0:
+        return ChapterBalanceReport(median_word_count=0)
+
+    oversized: list[ChapterBalanceOutlier] = []
+    undersized: list[ChapterBalanceOutlier] = []
+    upper = median * oversized_factor
+    lower = median * undersized_factor
+    for chap in real:
+        ratio = round(chap.word_count / median, 1)
+        if chap.word_count > upper:
+            oversized.append(
+                ChapterBalanceOutlier(
+                    index=chap.index,
+                    title=chap.title,
+                    word_count=chap.word_count,
+                    median=median,
+                    ratio=ratio,
+                    kind="oversized",
+                    fix=_balance_fix(chap, "oversized", ratio),
+                )
+            )
+        elif chap.word_count < lower:
+            undersized.append(
+                ChapterBalanceOutlier(
+                    index=chap.index,
+                    title=chap.title,
+                    word_count=chap.word_count,
+                    median=median,
+                    ratio=ratio,
+                    kind="undersized",
+                    fix=_balance_fix(chap, "undersized", ratio),
+                )
+            )
+    oversized.sort(key=lambda o: (-o.word_count, o.index))
+    undersized.sort(key=lambda o: (o.word_count, o.index))
+    return ChapterBalanceReport(
+        median_word_count=median,
+        oversized=oversized,
+        undersized=undersized,
+    )
+
+
+@dataclass(frozen=True)
 class ChapterReport:
     chapters: list[ChapterScore]
     average_score: int
     weakest_chapter_index: int | None
     fixes: list[str] = field(default_factory=list)
+    balance: ChapterBalanceReport | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "chapters": [c.to_json() for c in self.chapters],
             "average_score": self.average_score,
             "weakest_chapter_index": self.weakest_chapter_index,
             "fixes": list(self.fixes),
         }
+        if self.balance is not None:
+            payload["balance"] = self.balance.to_json()
+        return payload
 
 
 def top_weakest_chapters(report: ChapterReport, limit: int = 3) -> list[ChapterScore]:
@@ -300,16 +446,26 @@ def build_chapter_report(chapters: list[Chapter]) -> ChapterReport:
     """Score every chapter and aggregate into a ChapterReport."""
 
     if not chapters:
-        return ChapterReport(chapters=[], average_score=0, weakest_chapter_index=None, fixes=[])
+        return ChapterReport(
+            chapters=[],
+            average_score=0,
+            weakest_chapter_index=None,
+            fixes=[],
+            balance=ChapterBalanceReport(median_word_count=0),
+        )
     scores = [score_chapter(ch) for ch in chapters]
     avg = round(sum(s.overall for s in scores) / len(scores))
     weakest = min(scores, key=lambda s: s.overall)
+    balance = analyze_chapter_balance(chapters)
     fixes = [s.fix for s in scores if s.status != "READY"]
+    fixes.extend(o.fix for o in balance.oversized)
+    fixes.extend(o.fix for o in balance.undersized)
     return ChapterReport(
         chapters=scores,
         average_score=avg,
         weakest_chapter_index=weakest.index,
         fixes=fixes,
+        balance=balance,
     )
 
 
@@ -352,4 +508,47 @@ def render_chapter_report_markdown(title: str, report: ChapterReport) -> str:
         lines.append(f"- Score: **{chap.overall}/100** ({chap.status})")
         lines.append(f"- Fix: {chap.fix}")
         lines.append("")
+
+    lines.extend(_render_balance_section(report.balance))
     return "\n".join(lines)
+
+
+def _render_balance_section(balance: ChapterBalanceReport | None) -> list[str]:
+    """Render the Kapitel-Balance section. Empty list when nothing to flag."""
+
+    if balance is None or not balance.has_findings:
+        return []
+    lines: list[str] = [
+        "## Kapitel-Balance",
+        "",
+        (
+            f"Median-Wortzahl pro Kapitel: **{balance.median_word_count}**. "
+            "Schwellen: Split-Kandidat ab "
+            f"{OVERSIZED_FACTOR:g}× Median, Merge-Kandidat unter "
+            f"{UNDERSIZED_FACTOR:g}× Median."
+        ),
+        "",
+    ]
+    if balance.oversized:
+        lines.append("### Split-Kandidaten (zu lang)")
+        lines.append("")
+        for outlier in balance.oversized:
+            title_safe = outlier.title.replace("|", "/")[:80]
+            lines.append(
+                f"- 🔴 **Kapitel {outlier.index} — {title_safe}** "
+                f"({outlier.word_count} Woerter, {outlier.ratio:g}× Median)"
+            )
+            lines.append(f"  Fix: {outlier.fix}")
+        lines.append("")
+    if balance.undersized:
+        lines.append("### Merge-Kandidaten (zu kurz)")
+        lines.append("")
+        for outlier in balance.undersized:
+            title_safe = outlier.title.replace("|", "/")[:80]
+            lines.append(
+                f"- 🟡 **Kapitel {outlier.index} — {title_safe}** "
+                f"({outlier.word_count} Woerter, {outlier.ratio:g}× Median)"
+            )
+            lines.append(f"  Fix: {outlier.fix}")
+        lines.append("")
+    return lines

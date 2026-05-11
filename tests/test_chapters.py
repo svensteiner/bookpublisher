@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from modules.chapters import (
     Chapter,
+    ChapterBalanceOutlier,
+    ChapterBalanceReport,
     ChapterReport,
     ChapterScore,
+    analyze_chapter_balance,
     build_chapter_report,
     render_chapter_report_markdown,
     score_chapter,
@@ -230,3 +233,193 @@ def test_chapter_report_json_is_serializable():
     assert "chapters" in payload
     assert payload["chapters"][0]["scores"].keys() == {"promise", "proof", "value", "transition"}
     assert payload["average_score"] == payload["chapters"][0]["overall"]
+
+
+def _chapter(index: int, words: int, title: str | None = None) -> Chapter:
+    return Chapter(
+        index=index,
+        title=title or f"Kapitel {index}",
+        body="text " * words,
+        word_count=words,
+    )
+
+
+def test_balance_flags_oversized_chapter():
+    chapters = [
+        _chapter(1, 800),
+        _chapter(2, 1000),
+        _chapter(3, 4000),  # 4x median -> split candidate
+        _chapter(4, 900),
+        _chapter(5, 1100),
+    ]
+    balance = analyze_chapter_balance(chapters)
+    assert balance.median_word_count == 1000
+    assert [o.index for o in balance.oversized] == [3]
+    assert balance.oversized[0].kind == "oversized"
+    assert balance.oversized[0].ratio == 4.0
+    assert balance.undersized == []
+
+
+def test_balance_flags_undersized_chapter():
+    chapters = [
+        _chapter(1, 1000),
+        _chapter(2, 200),  # 0.2x median -> merge candidate
+        _chapter(3, 1000),
+        _chapter(4, 1100),
+        _chapter(5, 900),
+    ]
+    balance = analyze_chapter_balance(chapters)
+    assert balance.median_word_count == 1000
+    assert [o.index for o in balance.undersized] == [2]
+    assert balance.undersized[0].kind == "undersized"
+    assert balance.undersized[0].ratio == 0.2
+    assert balance.oversized == []
+
+
+def test_balance_sorts_oversized_by_descending_word_count():
+    chapters = [
+        _chapter(1, 1000),
+        _chapter(2, 1000),
+        _chapter(3, 1000),
+        _chapter(4, 1000),
+        _chapter(5, 3500),
+        _chapter(6, 5000),
+        _chapter(7, 4200),
+    ]
+    balance = analyze_chapter_balance(chapters)
+    assert balance.median_word_count == 1000
+    # 5000 > 4200 > 3500, all above median*3=3000.
+    assert [o.index for o in balance.oversized] == [6, 7, 5]
+
+
+def test_balance_sorts_undersized_by_ascending_word_count():
+    chapters = [
+        _chapter(1, 1000),
+        _chapter(2, 1000),
+        _chapter(3, 1000),
+        _chapter(4, 1000),
+        _chapter(5, 50),
+        _chapter(6, 200),
+        _chapter(7, 100),
+    ]
+    balance = analyze_chapter_balance(chapters)
+    assert balance.median_word_count == 1000
+    # All below median*0.3=300, ascending by word count.
+    assert [o.index for o in balance.undersized] == [5, 7, 6]
+
+
+def test_balance_ignores_tiny_chapter_sets():
+    chapters = [_chapter(1, 100), _chapter(2, 5000)]
+    balance = analyze_chapter_balance(chapters)
+    assert balance.has_findings is False
+    assert balance.median_word_count == 0
+
+
+def test_balance_empty_input():
+    balance = analyze_chapter_balance([])
+    assert balance.median_word_count == 0
+    assert balance.oversized == []
+    assert balance.undersized == []
+    assert balance.has_findings is False
+
+
+def test_balance_no_outliers_returns_empty_lists():
+    chapters = [_chapter(i, 1000) for i in range(1, 6)]
+    balance = analyze_chapter_balance(chapters)
+    assert balance.median_word_count == 1000
+    assert balance.oversized == []
+    assert balance.undersized == []
+    assert balance.has_findings is False
+
+
+def test_balance_does_not_mutate_input():
+    chapters = [_chapter(1, 1000), _chapter(2, 1000), _chapter(3, 5000)]
+    word_counts_before = [c.word_count for c in chapters]
+    analyze_chapter_balance(chapters)
+    assert [c.word_count for c in chapters] == word_counts_before
+
+
+def test_build_chapter_report_attaches_balance():
+    chapters = [
+        _chapter(1, 1000),
+        _chapter(2, 1000),
+        _chapter(3, 1000),
+        _chapter(4, 4000),
+    ]
+    report = build_chapter_report(chapters)
+    assert isinstance(report.balance, ChapterBalanceReport)
+    assert report.balance.median_word_count == 1000
+    assert any(o.index == 4 for o in report.balance.oversized)
+
+
+def test_build_chapter_report_balance_fix_appended_to_fixes():
+    chapters = [
+        _chapter(1, 1000),
+        _chapter(2, 1000),
+        _chapter(3, 1000),
+        _chapter(4, 4000),
+    ]
+    report = build_chapter_report(chapters)
+    assert any("splitten" in fix.lower() or "split" in fix.lower() for fix in report.fixes)
+
+
+def test_build_chapter_report_empty_carries_empty_balance():
+    report = build_chapter_report([])
+    assert isinstance(report.balance, ChapterBalanceReport)
+    assert report.balance.median_word_count == 0
+
+
+def test_render_markdown_shows_balance_section_when_outlier_exists():
+    chapters = [
+        _chapter(1, 1000),
+        _chapter(2, 1000),
+        _chapter(3, 1000),
+        _chapter(4, 4000, title="Riesenkapitel"),
+    ]
+    report = build_chapter_report(chapters)
+    md = render_chapter_report_markdown("Mein Buch", report)
+    assert "## Kapitel-Balance" in md
+    assert "Split-Kandidaten" in md
+    assert "Riesenkapitel" in md
+
+
+def test_render_markdown_hides_balance_section_when_no_outliers():
+    chapters = [_chapter(i, 1000) for i in range(1, 5)]
+    report = build_chapter_report(chapters)
+    md = render_chapter_report_markdown("Mein Buch", report)
+    assert "## Kapitel-Balance" not in md
+
+
+def test_balance_outlier_to_json_is_serializable():
+    outlier = ChapterBalanceOutlier(
+        index=3,
+        title="Riesenkapitel",
+        word_count=4000,
+        median=1000,
+        ratio=4.0,
+        kind="oversized",
+        fix="split it",
+    )
+    payload = outlier.to_json()
+    assert payload["index"] == 3
+    assert payload["kind"] == "oversized"
+    assert payload["ratio"] == 4.0
+
+
+def test_chapter_report_to_json_includes_balance_when_present():
+    chapters = [_chapter(i, 1000) for i in range(1, 5)]
+    chapters.append(_chapter(5, 4500))
+    report = build_chapter_report(chapters)
+    payload = report.to_json()
+    assert "balance" in payload
+    assert payload["balance"]["median_word_count"] > 0
+
+
+def test_chapter_report_to_json_omits_balance_when_none():
+    report = ChapterReport(
+        chapters=[_score(1, 80)],
+        average_score=80,
+        weakest_chapter_index=1,
+    )
+    payload = report.to_json()
+    assert "balance" not in payload
