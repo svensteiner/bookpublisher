@@ -36,6 +36,11 @@ from modules.round_delta import render_round_delta_markdown
 from modules.rounds import make_round_id, snapshot_round
 from modules.run_logger import RunLogger
 from modules.sample_scan import build_sample_scan_report, render_sample_scan_markdown
+from modules.score_history import (
+    append_score_history,
+    load_score_history,
+    render_score_history_markdown,
+)
 
 
 class PublisherPipeline:
@@ -137,7 +142,12 @@ class PublisherPipeline:
         self._mirror_if_single(projects, "cover_review.md")
         return projects
 
-    def run_qa(self, input_path: Path, round_id: str | None = None) -> list[BookProject]:
+    def run_qa(
+        self,
+        input_path: Path,
+        round_id: str | None = None,
+        mode: str = "quick_qa",
+    ) -> list[BookProject]:
         projects = self.discover(input_path)
         for project in projects:
             self.logger.log("stage_started", project_id=project.project_id, stage="industrial_qa")
@@ -221,6 +231,23 @@ class PublisherPipeline:
                     reason=str(exc),
                 )
             self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
+
+            history_path = self.writer.project_dir(project.project_id) / "score_history.json"
+            history = load_score_history(history_path, project.project_id)
+            history = append_score_history(history, project, qa, round_id=round_id, mode=mode)
+            self.writer.write_json("score_history.json", history, project.project_id)
+            self.writer.write_text(
+                "score_history.md",
+                render_score_history_markdown(project, history),
+                project.project_id,
+            )
+            self.logger.log(
+                "score_history_updated",
+                project_id=project.project_id,
+                entry_count=len(history.get("entries") or []),
+                industrial_score=qa.get("industrial_score"),
+            )
+
             delta = self.memory.compare_rounds(project.project_id, current_round_id=round_id)
             if delta is not None:
                 self.writer.write_text(
@@ -269,6 +296,8 @@ class PublisherPipeline:
             "agent_memory_snapshot.json",
             "round_delta.md",
             "round_delta.json",
+            "score_history.json",
+            "score_history.md",
         ]:
             self._mirror_if_single(projects, filename)
         return projects
@@ -293,7 +322,7 @@ class PublisherPipeline:
         if full_review:
             projects = self.run_all(input_path, round_id=round_id)
         else:
-            projects = self.run_qa(input_path, round_id=round_id)
+            projects = self.run_qa(input_path, round_id=round_id, mode=mode)
             if projects:
                 self.run_cover(input_path)
 
@@ -303,7 +332,7 @@ class PublisherPipeline:
         return summary
 
     def run_all(self, input_path: Path, round_id: str | None = None) -> list[BookProject]:
-        self.run_qa(input_path, round_id=round_id)
+        self.run_qa(input_path, round_id=round_id, mode="full_review")
         projects = self.run_review(input_path)
         if not projects:
             return projects

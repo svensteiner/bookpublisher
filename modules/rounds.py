@@ -32,6 +32,8 @@ QUICK_ROUND_ARTIFACTS = [
     "kdp_keywords.json",
     "sample_scan.md",
     "sample_scan.json",
+    "score_history.md",
+    "score_history.json",
 ]
 
 FULL_ROUND_ARTIFACTS = [
