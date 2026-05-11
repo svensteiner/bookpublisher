@@ -80,6 +80,63 @@ def _weakest_chapter_payload(
     return flattened[: max(0, limit)]
 
 
+def _top_rewrite_payload(rewrite_json: dict | None) -> dict | None:
+    """Pick the strongest single rewrite variant for beginner_summary.
+
+    Selects from bundles that have at least one diagnosis finding — if a
+    field is already in good shape we do not suggest a rewrite for it.
+    Among eligible bundles, returns the option with the highest
+    ``keyword_score``; ties are broken by shorter ``char_count`` (more
+    punchy) and a stable field priority (title > subtitle > description).
+
+    Returns ``None`` when no rewrite data is available or when no field
+    has any diagnosis finding — keeping the summary clean when the
+    existing metadata needs no copy work.
+    """
+
+    if not rewrite_json:
+        return None
+    bundles = rewrite_json.get("bundles") or []
+    if not bundles:
+        return None
+    field_priority: dict[str, int] = {
+        "title": 0,
+        "subtitle": 1,
+        "description_lead": 2,
+    }
+    candidates: list[tuple[int, int, int, dict]] = []
+    for bundle in bundles:
+        diagnosis = bundle.get("diagnosis") or []
+        if not diagnosis:
+            continue
+        field_key = str(bundle.get("field") or "")
+        priority = field_priority.get(field_key, 99)
+        for option in bundle.get("options") or []:
+            text = str(option.get("text") or "").strip()
+            if not text:
+                continue
+            keyword_score = int(option.get("keyword_score") or 0)
+            char_count = int(option.get("char_count") or len(text))
+            candidates.append(
+                (
+                    -keyword_score,
+                    char_count,
+                    priority,
+                    {
+                        "field": field_key,
+                        "text": text,
+                        "keyword_score": keyword_score,
+                        "char_count": char_count,
+                        "motivation": str(option.get("motivation") or ""),
+                    },
+                )
+            )
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+    return candidates[0][3]
+
+
 def _weakest_sample_payload(sample_json: dict | None) -> dict | None:
     """Extract the highest-risk Kindle-Sample section from a sample-scan payload.
 
@@ -274,6 +331,9 @@ class PublisherPipeline:
                     reason=str(exc),
                 )
             weakest_sample = _weakest_sample_payload(sample_json)
+            rewrite_report = build_rewrite_report(project)
+            rewrite_json = rewrite_report.to_json()
+            top_rewrite = _top_rewrite_payload(rewrite_json)
             self.writer.write_text(
                 "beginner_summary.md",
                 render_beginner_summary(
@@ -281,6 +341,7 @@ class PublisherPipeline:
                     qa,
                     weakest_chapters=weakest_chapters,
                     weakest_sample=weakest_sample,
+                    top_rewrite=top_rewrite,
                 ),
                 project.project_id,
             )
@@ -329,7 +390,6 @@ class PublisherPipeline:
                 project.project_id,
             )
             self.writer.write_text("competitor_research_template.csv", render_competitor_template_csv(project), project.project_id)
-            rewrite_report = build_rewrite_report(project)
             self.writer.write_text(
                 "rewrite_suggestions.md",
                 render_rewrite_report_markdown(project, rewrite_report),
@@ -337,7 +397,7 @@ class PublisherPipeline:
             )
             self.writer.write_json(
                 "rewrite_suggestions.json",
-                rewrite_report.to_json(),
+                rewrite_json,
                 project.project_id,
             )
             amazon_html_snippet = build_amazon_description_html(project)

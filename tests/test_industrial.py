@@ -385,6 +385,72 @@ def test_render_beginner_summary_weakest_sample_handles_missing_fields():
     assert "Kein Fix-Vorschlag" in summary
 
 
+def test_render_beginner_summary_top_rewrite_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_rewrite = {
+        "field": "title",
+        "text": "Sachbuch: Was wirklich funktioniert",
+        "keyword_score": 67,
+        "char_count": 34,
+        "motivation": "Buyer-Click: Direkte Substanz-Versprechen-Formel.",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_rewrite=top_rewrite
+    )
+    assert "## Top-Rewrite-Pick" in summary
+    assert "Sachbuch: Was wirklich funktioniert" in summary
+    assert "67/100" in summary
+    assert "Buyer-Click" in summary
+    assert "Titel" in summary
+    assert "`rewrite_suggestions.md`" in summary
+
+
+def test_render_beginner_summary_top_rewrite_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_rewrite=None
+    )
+    assert "## Top-Rewrite-Pick" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_rewrite={}
+    )
+    assert "## Top-Rewrite-Pick" not in summary_empty
+
+
+def test_render_beginner_summary_top_rewrite_section_absent_when_text_empty():
+    """An option without text content must not produce an empty quote block."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_rewrite = {
+        "field": "title",
+        "text": "   ",
+        "keyword_score": 99,
+        "char_count": 0,
+        "motivation": "Doesn't matter",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_rewrite=top_rewrite
+    )
+    assert "## Top-Rewrite-Pick" not in summary
+
+
+def test_render_beginner_summary_top_rewrite_handles_missing_motivation():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_rewrite = {
+        "field": "description_lead",
+        "text": "Dieser Lead überzeugt.",
+        "keyword_score": 33,
+        "char_count": 22,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_rewrite=top_rewrite
+    )
+    assert "## Top-Rewrite-Pick" in summary
+    assert "Dieser Lead überzeugt." in summary
+    assert "Beschreibungs-Einstieg" in summary
+    # No "Warum: " line should appear when no motivation is provided.
+    assert "Warum:" not in summary
+
+
 def test_render_beginner_summary_handles_empty_gate_list():
     minimal_report = {
         "decision": "GO_AFTER_FIXES",

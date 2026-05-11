@@ -506,6 +506,60 @@ def _render_weakest_chapters(weakest_chapters: list[dict[str, Any]] | None) -> l
     return lines
 
 
+# Beginner-friendly German labels per rewrite field (technical key → display).
+REWRITE_FIELD_LABELS: dict[str, str] = {
+    "title": "Titel",
+    "subtitle": "Untertitel",
+    "description_lead": "Beschreibungs-Einstieg",
+}
+
+
+def _render_top_rewrite(top_rewrite: dict[str, Any] | None) -> list[str]:
+    """Render the 'Top-Rewrite-Pick' block from a top-rewrite payload.
+
+    The dict is expected to carry ``field``, ``text``, ``keyword_score``,
+    ``char_count`` and ``motivation`` (the strongest single rewrite option
+    selected by the pipeline). Returns an empty list when no data is
+    provided so the section is omitted entirely — keeping the summary
+    clean when the existing metadata has no diagnostic findings.
+    """
+
+    if not top_rewrite:
+        return []
+    field_key = str(top_rewrite.get("field") or "").strip()
+    field_label = REWRITE_FIELD_LABELS.get(field_key, field_key or "Feld")
+    text = str(top_rewrite.get("text") or "").strip()
+    if not text:
+        return []
+    score = int(top_rewrite.get("keyword_score") or 0)
+    char_count = int(top_rewrite.get("char_count") or len(text))
+    motivation = str(top_rewrite.get("motivation") or "").strip()
+    badge, _ = score_badge(score)
+    lines = [
+        "## Top-Rewrite-Pick",
+        "",
+        (
+            "Stärkster Copy-Vorschlag mit dem höchsten Keyword-Score — "
+            f"kannst du direkt ins KDP-Backend kopieren ({field_label})."
+        ),
+        "",
+        f"**{field_label}:**",
+        "",
+        f"> {text}",
+        "",
+        f"- {badge} Keyword-Score: **{score}/100**",
+        f"- Zeichen: **{char_count}**",
+    ]
+    if motivation:
+        lines.append(f"- Warum: {motivation}")
+    lines.extend([
+        "",
+        "Weitere Varianten siehe `rewrite_suggestions.md`.",
+        "",
+    ])
+    return lines
+
+
 def _render_weakest_sample(weakest_sample: dict[str, Any] | None) -> list[str]:
     """Render the 'Schwächster Sample-Abschnitt' block.
 
@@ -542,6 +596,7 @@ def render_beginner_summary(
     report: dict[str, Any],
     weakest_chapters: list[dict[str, Any]] | None = None,
     weakest_sample: dict[str, Any] | None = None,
+    top_rewrite: dict[str, Any] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -598,6 +653,7 @@ def render_beginner_summary(
     lines.append("")
     lines.extend(_render_weakest_chapters(weakest_chapters))
     lines.extend(_render_weakest_sample(weakest_sample))
+    lines.extend(_render_top_rewrite(top_rewrite))
 
     lines.extend([
         "## Was bedeutet das praktisch?",
