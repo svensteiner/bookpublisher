@@ -14,7 +14,7 @@ Ein Item pro Run vollständig implementieren — kein Halbzeug.
 
 ## WICHTIG (professionelle Qualität)
 
-- [ ] **LLM-Fallback:** Wenn claude-sonnet-4-6 fehlschlägt → claude-haiku-4-5-20251001 als automatischer Fallback mit Logging.
+- [x] **LLM-Fallback:** Wenn claude-sonnet-4-6 fehlschlägt → claude-haiku-4-5-20251001 als automatischer Fallback mit Logging. *(modules/llm.py: `_call_model()` als testbarer Helper extrahiert, `complete()` versucht primaries Modell, fällt bei Exception automatisch auf `config.fallback_model` zurück, loggt `model_call_started`/`model_call_error`/`model_fallback_started`/`model_fallback_completed`. Bei doppeltem Fehlschlag ein klarer `ConfigError` der beide Modelle und beide Fehlertexte nennt — kein Traceback für den End-User. Edge Cases: kein Fallback konfiguriert, Fallback identisch mit primary, explizites Modell-Argument als Override — alle abgedeckt durch tests/test_llm.py.)*
 - [ ] **Strukturierter Score-Verlauf:** JSON-Datei die über alle Runden den Industrial-Score trackt. Graph-fähig (Datum, Score, Top-3-Fixes). In artifacts/score_history.json.
 - [ ] **Kapitel-Reihungscheck:** Prüfe ob die Kapitelreihenfolge dem klassischen Sachbuch-Bogen folgt (Problem → Lösung → Beweis → Transformation).
 - [ ] **Competitive-Positioning-Prompt:** Basierend auf Titel + Beschreibung generiere "Was macht dieses Buch einzigartig vs. die Top-Wettbewerber in dieser Nische?" Als eigener Review-Abschnitt in publisher_board_review.
@@ -43,3 +43,5 @@ Ein Item pro Run vollständig implementieren — kein Halbzeug.
 - [ ] **Sample-Ratio Konfig:** SAMPLE_RATIO (10%) und MAX_SECTIONS in AppConfig auslagern, damit Autoren mit kurzen Sachbüchern den Scan-Umfang erweitern können.
 - [ ] **Round-Delta in beginner_summary:** Top-Highlight (z.B. "3 Fixes erledigt, Score +15") direkt in beginner_summary.md aufnehmen, damit der Autor in der zweiten Runde sofort den Fortschritt sieht.
 - [ ] **Round-Delta mit LLM-Pass:** Optional eine LLM-Variante die persistente Fixes interpretiert ("warum bleibt dieser Fix offen — fehlt Zeit, Verständnis oder Material?") — schaltbar via AppConfig.
+- [ ] **LLM-Fallback Metrik in beginner_summary:** Wenn in einem Lauf das Fallback-Modell verwendet wurde, eine kurze Notiz in beginner_summary.md aufnehmen ("⚠️ Primärmodell `claude-sonnet-4-6` war nicht erreichbar — Bewertung kam von `claude-haiku-4-5-20251001`"), damit der Autor die niedrigere Tiefe einordnen kann.
+- [ ] **LLM-Retry mit Backoff vor Fallback:** Aktuell schaltet `complete()` bei der ersten Exception sofort auf das Fallback-Modell um. Transientes Rate-Limit oder Timeout könnte vor dem Modellwechsel 1× retryt werden (exponential backoff, max 2 Versuche pro Modell), bevor der Fallback einspringt.
