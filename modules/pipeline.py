@@ -34,6 +34,7 @@ from modules.release_assets import (
 from modules.rewrites import build_rewrite_report, render_rewrite_report_markdown
 from modules.rounds import make_round_id, snapshot_round
 from modules.run_logger import RunLogger
+from modules.sample_scan import build_sample_scan_report, render_sample_scan_markdown
 
 
 class PublisherPipeline:
@@ -200,6 +201,24 @@ class PublisherPipeline:
                 {"keywords": [kw.to_json() for kw in kdp_keywords]},
                 project.project_id,
             )
+            try:
+                sample_scan = build_sample_scan_report(project)
+                self.writer.write_text(
+                    "sample_scan.md",
+                    render_sample_scan_markdown(project, sample_scan),
+                    project.project_id,
+                )
+                self.writer.write_json(
+                    "sample_scan.json",
+                    sample_scan.to_json(),
+                    project.project_id,
+                )
+            except RuntimeError as exc:
+                self.logger.log(
+                    "sample_scan_skipped",
+                    project_id=project.project_id,
+                    reason=str(exc),
+                )
             self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
             self.logger.log(
                 "industrial_qa_completed",
@@ -223,6 +242,8 @@ class PublisherPipeline:
             "amazon_description.json",
             "kdp_keywords.md",
             "kdp_keywords.json",
+            "sample_scan.md",
+            "sample_scan.json",
             "agent_memory_snapshot.json",
         ]:
             self._mirror_if_single(projects, filename)
