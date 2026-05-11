@@ -18,10 +18,12 @@ So testest du den Agenten in 30 Sekunden:
 Was du dabei siehst:
 
 - Das echte Buch "Unter Fuenfzig Euro" von Mag. Sven Steiner -
-  dem Entwickler von BookPublisher.
+  dem Entwickler von BookPublisher (DOCX-Manuskript, KDP-Cover
+  und vollstaendige Metadaten - genau so wie ein fertiges
+  Produktionspaket aussieht).
 - Eine ehrliche Bewertung dieses Buches durch den Agenten selbst:
-  Kapitel-Scores, Kindle-Sample-Risiko, Amazon-Description-HTML
-  und 7 fertige KDP-Keywords.
+  Kapitel-Scores, Kindle-Sample-Risiko, Cover-Lesbarkeit,
+  Amazon-Description-HTML und 7 fertige KDP-Keywords.
 
 Das Buch direkt kaufen: https://aistudioxyz.com/buch
 Mehr vom Autor:        https://aistudioxyz.com

@@ -9,6 +9,7 @@ Dieser Ordner enthält die Dateien, die in das Customer-Download-ZIP
 release/
 ├── beispielbuch/                    # Cross-Selling-Beispielbuch
 │   ├── Unter_Fuenfzig_Euro.docx     # Echtes Manuskript des Autors
+│   ├── cover.jpg                    # Echtes KDP-Cover (1600x2560)
 │   ├── metadata.md                  # KDP-Titel, Untertitel, Beschreibung, Amazon-Link
 │   └── LIES_MICH.txt                # 4-Schritte-Anleitung für den Kunden
 └── README.md                        # Diese Datei

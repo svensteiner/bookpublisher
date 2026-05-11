@@ -28,6 +28,7 @@ SAMPLE_BOOK_DIR = PROJECT_ROOT / "release" / "beispielbuch"
 SAMPLE_MANUSCRIPT = SAMPLE_BOOK_DIR / "Unter_Fuenfzig_Euro.docx"
 SAMPLE_METADATA = SAMPLE_BOOK_DIR / "metadata.md"
 SAMPLE_READ_ME = SAMPLE_BOOK_DIR / "LIES_MICH.txt"
+SAMPLE_COVER = SAMPLE_BOOK_DIR / "cover.jpg"
 
 
 def _build_config(workspace: Path) -> AppConfig:
@@ -56,9 +57,16 @@ def test_sample_book_files_are_shipped_with_repo():
     assert SAMPLE_MANUSCRIPT.exists(), "Beispielbuch DOCX is missing."
     assert SAMPLE_METADATA.exists(), "Beispielbuch metadata.md is missing."
     assert SAMPLE_READ_ME.exists(), "Beispielbuch LIES_MICH.txt is missing."
+    assert SAMPLE_COVER.exists(), (
+        "Beispielbuch cover.jpg is missing - customer would see a half-complete "
+        "book package on first run."
+    )
 
     assert SAMPLE_MANUSCRIPT.stat().st_size > 10_000, (
         "Beispielbuch DOCX is suspiciously small - did the manuscript get truncated?"
+    )
+    assert SAMPLE_COVER.stat().st_size > 50_000, (
+        "Beispielbuch cover.jpg is too small - likely a placeholder, not a real KDP cover."
     )
 
     metadata_text = SAMPLE_METADATA.read_text(encoding="utf-8")
@@ -120,6 +128,13 @@ def test_customer_journey_detects_real_book_metadata():
     project = projects[0]
     assert project.manuscript is not None
     assert project.manuscript.name == "Unter_Fuenfzig_Euro.docx"
+    assert project.cover is not None, (
+        "Customer-facing book package must include the cover - discovery did not detect cover.jpg."
+    )
+    assert project.cover.name == "cover.jpg"
+    assert "cover_image" not in project.missing_assets, (
+        "Sample book must not be flagged as missing a cover image."
+    )
     assert project.title is not None and "Unter" in project.title
     assert project.subtitle is not None and len(project.subtitle) > 10
     assert project.author is not None and "Steiner" in project.author
