@@ -7,7 +7,7 @@ Ein Item pro Run vollständig implementieren — kein Halbzeug.
 
 - [x] **Kapitel-Analyse:** Jedes Kapitel einzeln bewerten — Versprechen, Beweis, Wert, Übergang. Output pro Kapitel: Score + konkrete Fix-Zeile. *(modules/chapters.py + chapter_review() in modules/review.py, wired into pipeline run_qa)*
 - [x] **Konkrete Rewrite-Vorschläge:** Nicht "Titel zu kurz" sondern 3 alternative Titel mit Keyword-Score und Kaufmotivation. Gilt für Titel, Untertitel, Amazon-Description. *(modules/rewrites.py: build_rewrite_report() + render_rewrite_report_markdown(), pure-Python, in run_qa pipeline integriert — artifacts: rewrite_suggestions.md/.json)*
-- [ ] **Amazon-Description-HTML:** Generator der die KDP-Beschreibung in echtem Amazon-HTML ausgibt (`<b>`, `<br>`, Bullet-Liste) — copy-paste-fertig für KDP Backend.
+- [x] **Amazon-Description-HTML:** Generator der die KDP-Beschreibung in echtem Amazon-HTML ausgibt (`<b>`, `<br>`, Bullet-Liste) — copy-paste-fertig für KDP Backend. *(modules/amazon_html.py: build_amazon_description_html() + render_amazon_description_report_markdown(), HTML auf KDP-erlaubte Tag-Subset beschränkt + HTML-Escaping, in run_qa pipeline integriert — artifacts: amazon_description.html/.json + amazon_description_report.md)*
 - [ ] **7 KDP-Keywords konkret befüllen:** Statt "Keywords fehlen" → liefere die exakten 7 Keyword-Strings (max 50 Zeichen each) basierend auf Titel, Subtitle, Beschreibung. Recherche-Logik in modules/release_assets.py.
 - [ ] **First-10%-Deep-Scan:** Die ersten 10% des Manuskripts sind der Kindle-Sample. Bewerte jeden Abschnitt: Hält der Leser durch oder bricht er ab? Hook-Stärke, Versprechen-Klarheit, erster konkreter Wert.
 - [ ] **Runden-Gedächtnis mit Delta:** In Runde 2+ prüfen ob die Fixes aus Runde 1 umgesetzt wurden. AgentMemory.compare_rounds().
@@ -33,3 +33,5 @@ Ein Item pro Run vollständig implementieren — kein Halbzeug.
 - [ ] **Beginner-Summary erweitern:** Top-3 schwächste Kapitel mit ihrer Fix-Zeile direkt in beginner_summary.md übernehmen.
 - [ ] **Rewrite-Varianten mit LLM verfeinern:** Aktuelle Varianten folgen festen Bestseller-Mustern. Optional eine LLM-Pass-Variante die das Original direkt umschreibt (statt Template) — schaltbar über AppConfig.
 - [ ] **Rewrite-Top-Pick in beginner_summary:** Top-Variante (höchster Keyword-Score) automatisch in beginner_summary.md vorschlagen.
+- [ ] **KDP-HTML Live-Preview im beginner_summary:** Kurze Vorschau der ersten 3 Zeilen (gerendert, ohne HTML-Tags) damit der Autor sieht, wie die Beschreibung auf Amazon aussieht.
+- [ ] **Amazon-Description-HTML mit LLM-Pass:** Optional eine LLM-Variante, die statt Template-Bullets echte Highlight-Bullets aus dem Manuskript zieht — schaltbar via AppConfig.

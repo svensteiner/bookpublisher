@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 
 from modules.agent_core import AgentMemory, SkillRegistry
+from modules.amazon_html import (
+    build_amazon_description_html,
+    render_amazon_description_report_markdown,
+)
 from modules.artifacts import ArtifactWriter
 from modules.config import AppConfig
 from modules.cover import render_cover_review
@@ -168,6 +172,22 @@ class PublisherPipeline:
                 rewrite_report.to_json(),
                 project.project_id,
             )
+            amazon_html_snippet = build_amazon_description_html(project)
+            self.writer.write_text(
+                "amazon_description.html",
+                amazon_html_snippet.html,
+                project.project_id,
+            )
+            self.writer.write_text(
+                "amazon_description_report.md",
+                render_amazon_description_report_markdown(project, amazon_html_snippet),
+                project.project_id,
+            )
+            self.writer.write_json(
+                "amazon_description.json",
+                amazon_html_snippet.to_json(),
+                project.project_id,
+            )
             self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
             self.logger.log(
                 "industrial_qa_completed",
@@ -186,6 +206,9 @@ class PublisherPipeline:
             "competitor_research_template.csv",
             "rewrite_suggestions.md",
             "rewrite_suggestions.json",
+            "amazon_description.html",
+            "amazon_description_report.md",
+            "amazon_description.json",
             "agent_memory_snapshot.json",
         ]:
             self._mirror_if_single(projects, filename)
