@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from modules.artifacts import safe_slug
 from modules.readers import read_any_text, read_text_file
@@ -175,7 +175,7 @@ def _clean_author(line: str) -> str:
     return value
 
 
-def _extract_metadata_from_text(text: str) -> dict[str, str | None]:
+def _extract_metadata_from_text(text: str) -> dict[str, Any]:
     lines = [line.strip("#* \t") for line in text.splitlines() if line.strip()]
     title = lines[0] if lines else None
     subtitle = None
@@ -190,12 +190,27 @@ def _extract_metadata_from_text(text: str) -> dict[str, str | None]:
 
     title_match = re.search(r"##\s+KDP Titel\s*\n+\s*\**(.+?)\**\s*(?:\n|$)", text, flags=re.I)
     subtitle_match = re.search(r"##\s+KDP Untertitel\s*\n+\s*\**(.+?)\**\s*(?:\n|$)", text, flags=re.I)
+    author_match = re.search(r"##\s+KDP Autor\s*\n+\s*\**(.+?)\**\s*(?:\n|$)", text, flags=re.I)
+    description_match = re.search(r"##\s+Amazon Beschreibung", text, flags=re.I)
     if title_match:
         title = title_match.group(1).strip("* ")
     if subtitle_match:
         subtitle = subtitle_match.group(1).strip("* ")
+    if author_match:
+        author = _clean_author(author_match.group(1))
 
-    return {"title": title, "subtitle": subtitle, "author": author, "amazon_description": _extract_description(text)}
+    return {
+        "title": title,
+        "subtitle": subtitle,
+        "author": author,
+        "amazon_description": _extract_description(text),
+        "_explicit": {
+            "title": bool(title_match),
+            "subtitle": bool(subtitle_match),
+            "author": bool(author_match),
+            "amazon_description": bool(description_match),
+        },
+    }
 
 
 def discover_books(
@@ -220,24 +235,39 @@ def discover_books(
         cover_files = [p for p in files if p.suffix.lower() in {".png", ".jpg", ".jpeg"}]
 
         project_id = safe_slug(root.name if root != input_path else (manuscript.stem if manuscript else root.name))
-        metadata = {"title": None, "subtitle": None, "author": None, "amazon_description": None}
+        metadata: dict[str, str | None] = {
+            "title": None,
+            "subtitle": None,
+            "author": None,
+            "amazon_description": None,
+        }
+        explicit_set: set[str] = set()
+
+        def _merge(extracted: dict[str, Any]) -> None:
+            explicit_flags = extracted.get("_explicit", {}) or {}
+            for key in ("title", "subtitle", "author", "amazon_description"):
+                value = extracted.get(key)
+                if not value:
+                    continue
+                is_explicit = bool(explicit_flags.get(key))
+                if not metadata.get(key):
+                    metadata[key] = value
+                    if is_explicit:
+                        explicit_set.add(key)
+                elif is_explicit and key not in explicit_set:
+                    metadata[key] = value
+                    explicit_set.add(key)
 
         for path in text_files:
             try:
                 text = read_text_file(path)
             except OSError:
                 continue
-            extracted = _extract_metadata_from_text(text)
-            for key, value in extracted.items():
-                if value and not metadata.get(key):
-                    metadata[key] = value
+            _merge(_extract_metadata_from_text(text))
 
         if manuscript:
             try:
-                extracted = _extract_metadata_from_text(read_any_text(manuscript)[:5000])
-                for key, value in extracted.items():
-                    if value and not metadata.get(key):
-                        metadata[key] = value
+                _merge(_extract_metadata_from_text(read_any_text(manuscript)[:5000]))
             except Exception:
                 pass
 

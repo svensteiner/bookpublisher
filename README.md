@@ -20,6 +20,24 @@ Dann:
 4. Buchdateien im Ordner anpassen.
 5. Naechste Pruefrunde starten.
 
+### Was der Kunde nach dem Download sieht
+
+In `release/beispielbuch/` liegt ein vollstaendiges Beispielbuch
+(`Unter Fuenfzig Euro` von Mag. Sven Steiner). Damit kannst du den
+Agenten in 30 Sekunden ausprobieren:
+
+1. `BookPublisher starten.bat` doppelklicken.
+2. "Ordner waehlen" → `release/beispielbuch` auswaehlen.
+3. "Pruefrunde starten" → laeuft im Schnellmodus ohne API-Key.
+4. `beginner_summary.md` oeffnet sich → Ampel + naechste Schritte.
+
+Der Schnellmodus erzeugt direkt benutzbare KDP-Assets im Runden-Ordner:
+`beginner_summary.md`, `kdp_keywords.md` (7 fertige Slots),
+`amazon_description.html` (copy-paste-fertig fuer KDP Backend),
+`rewrite_suggestions.md`, `sample_scan.md`, `chapter_review.md` und
+mehr. Der End-to-End-Test in `tests/test_customer_journey.py`
+verifiziert diesen Pfad bei jedem Commit.
+
 Jede Runde wird hier archiviert:
 
 ```text

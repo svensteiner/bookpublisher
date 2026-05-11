@@ -21,6 +21,17 @@ QUICK_ROUND_ARTIFACTS = [
     "agent_memory_snapshot.json",
     "round_delta.md",
     "round_delta.json",
+    "chapter_review.md",
+    "chapter_review.json",
+    "rewrite_suggestions.md",
+    "rewrite_suggestions.json",
+    "amazon_description.html",
+    "amazon_description.json",
+    "amazon_description_report.md",
+    "kdp_keywords.md",
+    "kdp_keywords.json",
+    "sample_scan.md",
+    "sample_scan.json",
 ]
 
 FULL_ROUND_ARTIFACTS = [

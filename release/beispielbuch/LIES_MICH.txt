@@ -1,0 +1,30 @@
+BookPublisher - Beispielbuch
+=============================
+
+Dieser Ordner ist ein vollstaendiges Beispielbuch, mit dem du
+BookPublisher direkt nach dem Download ausprobieren kannst.
+
+So testest du den Agenten in 30 Sekunden:
+
+1. Starte BookPublisher (Doppelklick auf BookPublisher starten.bat
+   oder BookPublisher.exe).
+2. Klicke "Ordner waehlen" und waehle GENAU DIESEN Ordner aus
+   (release/beispielbuch).
+3. Klicke "Pruefrunde starten" - der Schnellmodus laeuft ohne
+   API-Schluessel.
+4. Lies "beginner_summary.md" - dort steht die Ampel und die
+   naechsten konkreten Schritte.
+
+Was du dabei siehst:
+
+- Das echte Buch "Unter Fuenfzig Euro" von Mag. Sven Steiner -
+  dem Entwickler von BookPublisher.
+- Eine ehrliche Bewertung dieses Buches durch den Agenten selbst:
+  Kapitel-Scores, Kindle-Sample-Risiko, Amazon-Description-HTML
+  und 7 fertige KDP-Keywords.
+
+Das Buch direkt kaufen: https://aistudioxyz.com/buch
+Mehr vom Autor:        https://aistudioxyz.com
+
+Wenn du danach dein eigenes Buch pruefen willst, waehle einfach
+deinen eigenen Buchordner aus - der Ablauf ist identisch.
