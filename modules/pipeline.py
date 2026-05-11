@@ -13,6 +13,7 @@ from modules.config import AppConfig
 from modules.cover import render_cover_review
 from modules.discovery import BookProject, discover_books, render_discovery_markdown
 from modules.industrial import build_industrial_qa, render_beginner_summary, render_industrial_qa_markdown
+from modules.kdp_keywords import build_kdp_keywords, render_kdp_keywords_report_markdown
 from modules.llm import LLMClient
 from modules.review import (
     amazon_review,
@@ -188,6 +189,17 @@ class PublisherPipeline:
                 amazon_html_snippet.to_json(),
                 project.project_id,
             )
+            kdp_keywords = build_kdp_keywords(project)
+            self.writer.write_text(
+                "kdp_keywords.md",
+                render_kdp_keywords_report_markdown(project, kdp_keywords),
+                project.project_id,
+            )
+            self.writer.write_json(
+                "kdp_keywords.json",
+                {"keywords": [kw.to_json() for kw in kdp_keywords]},
+                project.project_id,
+            )
             self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
             self.logger.log(
                 "industrial_qa_completed",
@@ -209,6 +221,8 @@ class PublisherPipeline:
             "amazon_description.html",
             "amazon_description_report.md",
             "amazon_description.json",
+            "kdp_keywords.md",
+            "kdp_keywords.json",
             "agent_memory_snapshot.json",
         ]:
             self._mirror_if_single(projects, filename)
