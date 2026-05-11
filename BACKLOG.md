@@ -6,7 +6,7 @@ Ein Item pro Run vollständig implementieren — kein Halbzeug.
 ## KRITISCH (direkter Qualitätssprung für den Autor)
 
 - [x] **Kapitel-Analyse:** Jedes Kapitel einzeln bewerten — Versprechen, Beweis, Wert, Übergang. Output pro Kapitel: Score + konkrete Fix-Zeile. *(modules/chapters.py + chapter_review() in modules/review.py, wired into pipeline run_qa)*
-- [ ] **Konkrete Rewrite-Vorschläge:** Nicht "Titel zu kurz" sondern 3 alternative Titel mit Keyword-Score und Kaufmotivation. Gilt für Titel, Untertitel, Amazon-Description.
+- [x] **Konkrete Rewrite-Vorschläge:** Nicht "Titel zu kurz" sondern 3 alternative Titel mit Keyword-Score und Kaufmotivation. Gilt für Titel, Untertitel, Amazon-Description. *(modules/rewrites.py: build_rewrite_report() + render_rewrite_report_markdown(), pure-Python, in run_qa pipeline integriert — artifacts: rewrite_suggestions.md/.json)*
 - [ ] **Amazon-Description-HTML:** Generator der die KDP-Beschreibung in echtem Amazon-HTML ausgibt (`<b>`, `<br>`, Bullet-Liste) — copy-paste-fertig für KDP Backend.
 - [ ] **7 KDP-Keywords konkret befüllen:** Statt "Keywords fehlen" → liefere die exakten 7 Keyword-Strings (max 50 Zeichen each) basierend auf Titel, Subtitle, Beschreibung. Recherche-Logik in modules/release_assets.py.
 - [ ] **First-10%-Deep-Scan:** Die ersten 10% des Manuskripts sind der Kindle-Sample. Bewerte jeden Abschnitt: Hält der Leser durch oder bricht er ab? Hook-Stärke, Versprechen-Klarheit, erster konkreter Wert.
@@ -31,3 +31,5 @@ Ein Item pro Run vollständig implementieren — kein Halbzeug.
 - [ ] **Kapitel-Scoring mit LLM verfeinern:** Aktuelle Bewertung ist heuristisch (Regex-Marker). Optional eine LLM-Pass-Variante für reichere Fix-Vorschläge — laufzeit-gesteuert über AppConfig.
 - [ ] **Per-Kapitel Wortzähl-Balance:** Wenn ein Kapitel >3× das Median-Volumen hat, flaggen ("Kapitel X ist viermal länger als der Durchschnitt — splitten?").
 - [ ] **Beginner-Summary erweitern:** Top-3 schwächste Kapitel mit ihrer Fix-Zeile direkt in beginner_summary.md übernehmen.
+- [ ] **Rewrite-Varianten mit LLM verfeinern:** Aktuelle Varianten folgen festen Bestseller-Mustern. Optional eine LLM-Pass-Variante die das Original direkt umschreibt (statt Template) — schaltbar über AppConfig.
+- [ ] **Rewrite-Top-Pick in beginner_summary:** Top-Variante (höchster Keyword-Score) automatisch in beginner_summary.md vorschlagen.

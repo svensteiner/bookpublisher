@@ -26,6 +26,7 @@ from modules.release_assets import (
     render_competitor_template_csv,
     render_kindle_preview_check,
 )
+from modules.rewrites import build_rewrite_report, render_rewrite_report_markdown
 from modules.rounds import make_round_id, snapshot_round
 from modules.run_logger import RunLogger
 
@@ -156,6 +157,17 @@ class PublisherPipeline:
             self.writer.write_text("kindle_preview_check.md", render_kindle_preview_check(project), project.project_id)
             self.writer.write_text("amazon_research_brief.md", render_amazon_research_brief(project), project.project_id)
             self.writer.write_text("competitor_research_template.csv", render_competitor_template_csv(project), project.project_id)
+            rewrite_report = build_rewrite_report(project)
+            self.writer.write_text(
+                "rewrite_suggestions.md",
+                render_rewrite_report_markdown(project, rewrite_report),
+                project.project_id,
+            )
+            self.writer.write_json(
+                "rewrite_suggestions.json",
+                rewrite_report.to_json(),
+                project.project_id,
+            )
             self.writer.write_json("agent_memory_snapshot.json", self.memory.snapshot(project.project_id), project.project_id)
             self.logger.log(
                 "industrial_qa_completed",
@@ -172,6 +184,8 @@ class PublisherPipeline:
             "kindle_preview_check.md",
             "amazon_research_brief.md",
             "competitor_research_template.csv",
+            "rewrite_suggestions.md",
+            "rewrite_suggestions.json",
             "agent_memory_snapshot.json",
         ]:
             self._mirror_if_single(projects, filename)
