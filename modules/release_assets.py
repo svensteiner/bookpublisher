@@ -5,6 +5,7 @@ from io import StringIO
 from pathlib import Path
 
 from modules.discovery import BookProject
+from modules.personas import PersonaReport, render_persona_brief_section
 
 
 def find_kindle_previewer() -> Path | None:
@@ -93,9 +94,13 @@ def _derive_search_queries(project: BookProject, max_queries: int = 7) -> list[s
     return queries[:max_queries]
 
 
-def render_amazon_research_brief(project: BookProject) -> str:
+def render_amazon_research_brief(
+    project: BookProject,
+    persona_report: PersonaReport | None = None,
+) -> str:
     queries = _derive_search_queries(project)
     query_lines = "\n".join(f"- {q}" for q in queries)
+    persona_block = render_persona_brief_section(persona_report) if persona_report else ""
     lines = [
         "# Amazon-Recherche",
         "",
@@ -107,6 +112,10 @@ def render_amazon_research_brief(project: BookProject) -> str:
         "",
         "Nutze diese Recherche vor der Veroeffentlichung, um dein Buch mit echten Amazon-Ergebnissen zu vergleichen. Suche manuell auf Amazon und fuelle die Wettbewerbs-Tabelle aus.",
         "",
+    ]
+    if persona_block:
+        lines.append(persona_block)
+    lines += [
         "## Suchbegriffe fuer Amazon",
         "",
         query_lines,

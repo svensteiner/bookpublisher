@@ -19,6 +19,7 @@ from modules.discovery import BookProject, discover_books, render_discovery_mark
 from modules.industrial import build_industrial_qa, render_beginner_summary, render_industrial_qa_markdown
 from modules.kdp_keywords import build_kdp_keywords, render_kdp_keywords_report_markdown
 from modules.llm import LLMClient
+from modules.personas import build_persona_report, render_persona_report_markdown
 from modules.review import (
     amazon_review,
     chapter_arc_review,
@@ -184,10 +185,16 @@ class PublisherPipeline:
             self.writer.write_json("industrial_qa_report.json", qa, project.project_id)
             self.writer.write_text("industrial_qa_report.md", render_industrial_qa_markdown(qa), project.project_id)
             self.writer.write_text("beginner_summary.md", render_beginner_summary(project, qa), project.project_id)
+            chapter_titles: list[str] = []
             try:
                 chapter_md, chapter_json = chapter_review(project)
                 self.writer.write_text("chapter_review.md", chapter_md, project.project_id)
                 self.writer.write_json("chapter_review.json", chapter_json, project.project_id)
+                chapter_titles = [
+                    str(c.get("title") or "")
+                    for c in (chapter_json.get("chapters") or [])
+                    if c.get("title")
+                ]
             except RuntimeError as exc:
                 self.logger.log(
                     "chapter_review_skipped",
@@ -212,7 +219,29 @@ class PublisherPipeline:
                     reason=str(exc),
                 )
             self.writer.write_text("kindle_preview_check.md", render_kindle_preview_check(project), project.project_id)
-            self.writer.write_text("amazon_research_brief.md", render_amazon_research_brief(project), project.project_id)
+            persona_report = build_persona_report(project, chapter_titles=chapter_titles)
+            self.writer.write_text(
+                "buyer_personas.md",
+                render_persona_report_markdown(project, persona_report),
+                project.project_id,
+            )
+            self.writer.write_json(
+                "buyer_personas.json",
+                persona_report.to_json(),
+                project.project_id,
+            )
+            self.logger.log(
+                "buyer_personas_completed",
+                project_id=project.project_id,
+                niche=persona_report.niche_key,
+                persona_count=len(persona_report.personas),
+                signal_flags=persona_report.signal_flags,
+            )
+            self.writer.write_text(
+                "amazon_research_brief.md",
+                render_amazon_research_brief(project, persona_report=persona_report),
+                project.project_id,
+            )
             self.writer.write_text("competitor_research_template.csv", render_competitor_template_csv(project), project.project_id)
             rewrite_report = build_rewrite_report(project)
             self.writer.write_text(
@@ -344,6 +373,8 @@ class PublisherPipeline:
             "chapter_arc.json",
             "kindle_preview_check.md",
             "amazon_research_brief.md",
+            "buyer_personas.md",
+            "buyer_personas.json",
             "competitor_research_template.csv",
             "rewrite_suggestions.md",
             "rewrite_suggestions.json",
