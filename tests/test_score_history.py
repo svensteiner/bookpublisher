@@ -366,6 +366,129 @@ def test_render_markdown_skips_gate_trend_when_only_one_entry():
     assert "## Gate-Verlauf" not in rendered
 
 
+def test_append_records_arc_score_when_provided():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(history, project, _qa(industrial_score=78), arc_score=85)
+
+    entry = history["entries"][0]
+    assert entry["arc_score"] == 85
+    assert entry["arc_delta"] is None
+
+
+def test_append_records_arc_delta_against_previous_entry():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(history, project, _qa(industrial_score=70), arc_score=60)
+
+    history = append_score_history(history, project, _qa(industrial_score=82), arc_score=85)
+
+    assert history["entries"][-1]["arc_score"] == 85
+    assert history["entries"][-1]["arc_delta"] == 25
+
+
+def test_append_arc_delta_skips_rounds_without_arc():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(history, project, _qa(industrial_score=70), arc_score=60)
+    # second round without arc analysis (e.g. chapter_arc_review raised)
+    history = append_score_history(history, project, _qa(industrial_score=72))
+
+    history = append_score_history(history, project, _qa(industrial_score=80), arc_score=78)
+
+    assert history["entries"][-1]["arc_score"] == 78
+    # delta compares against the most recent prior arc score (60), not 0
+    assert history["entries"][-1]["arc_delta"] == 18
+    # middle entry has no arc fields populated
+    assert history["entries"][1]["arc_score"] is None
+    assert history["entries"][1]["arc_delta"] is None
+
+
+def test_append_arc_score_is_optional_and_defaults_to_none():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(history, project, _qa(industrial_score=78))
+
+    entry = history["entries"][0]
+    assert entry["arc_score"] is None
+    assert entry["arc_delta"] is None
+
+
+def test_append_arc_score_handles_invalid_input_gracefully():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(history, project, _qa(industrial_score=78), arc_score="not-a-number")  # type: ignore[arg-type]
+
+    assert history["entries"][0]["arc_score"] is None
+
+
+def test_render_markdown_includes_arc_column_when_any_entry_has_arc():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        arc_score=60,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=82),
+        arc_score=85,
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "| Datum | Runde | Modus | Score | Delta | Arc | Decision |" in rendered
+    assert "60/100" in rendered
+    assert "85/100 (+25)" in rendered
+
+
+def test_render_markdown_omits_arc_column_when_no_entry_has_arc():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(history, project, _qa(industrial_score=78))
+    history = append_score_history(history, project, _qa(industrial_score=82))
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "| Datum | Runde | Modus | Score | Delta | Decision |" in rendered
+    assert "Arc" not in rendered.split("## Top-Fixes")[0].split("|")[0] or "| Arc |" not in rendered
+
+
+def test_render_markdown_arc_column_uses_dash_for_missing_entries():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        arc_score=60,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    # second round ran without chapter_arc analysis
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=75),
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    # arc column exists because the first entry has an arc score
+    assert "| Datum | Runde | Modus | Score | Delta | Arc | Decision |" in rendered
+    # the second row uses "-" for arc
+    rows = [line for line in rendered.split("\n") if line.startswith("| 2026-05-11")]
+    assert rows and " | - | " in rows[0]
+
+
 def test_build_gate_trends_min_points_clamps_to_two():
     entries = [
         {"gates": [{"name": "asset_completeness", "score": 60}]},

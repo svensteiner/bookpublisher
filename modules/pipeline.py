@@ -718,17 +718,6 @@ class PublisherPipeline:
             top_rewrite = _top_rewrite_payload(rewrite_json)
             delta = self.memory.compare_rounds(project.project_id, current_round_id=round_id)
             round_delta_highlight = _round_delta_payload(delta)
-            history_path = self.writer.project_dir(project.project_id) / "score_history.json"
-            history = load_score_history(history_path, project.project_id)
-            history = append_score_history(history, project, qa, round_id=round_id, mode=mode)
-            score_history_highlight = _score_history_payload(history)
-            kdp_keywords = build_kdp_keywords(project)
-            top_kdp_keywords = _top_kdp_keywords_payload(kdp_keywords)
-            positioning = build_positioning_report(project)
-            top_positioning = _top_positioning_payload(positioning)
-            top_collision_risk = _top_collision_risk_payload(positioning)
-            persona_report = build_persona_report(project, chapter_titles=chapter_titles)
-            top_persona = _top_persona_payload(persona_report)
             arc_md: str | None = None
             arc_json: dict | None = None
             try:
@@ -740,6 +729,32 @@ class PublisherPipeline:
                     reason=str(exc),
                 )
             top_arc = _top_arc_payload(arc_json)
+            arc_score_value: int | None = None
+            if arc_json is not None:
+                raw_arc = arc_json.get("arc_score")
+                if raw_arc is not None:
+                    try:
+                        arc_score_value = int(raw_arc)
+                    except (TypeError, ValueError):
+                        arc_score_value = None
+            history_path = self.writer.project_dir(project.project_id) / "score_history.json"
+            history = load_score_history(history_path, project.project_id)
+            history = append_score_history(
+                history,
+                project,
+                qa,
+                round_id=round_id,
+                mode=mode,
+                arc_score=arc_score_value,
+            )
+            score_history_highlight = _score_history_payload(history)
+            kdp_keywords = build_kdp_keywords(project)
+            top_kdp_keywords = _top_kdp_keywords_payload(kdp_keywords)
+            positioning = build_positioning_report(project)
+            top_positioning = _top_positioning_payload(positioning)
+            top_collision_risk = _top_collision_risk_payload(positioning)
+            persona_report = build_persona_report(project, chapter_titles=chapter_titles)
+            top_persona = _top_persona_payload(persona_report)
             self.writer.write_text(
                 "beginner_summary.md",
                 render_beginner_summary(

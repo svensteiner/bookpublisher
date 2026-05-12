@@ -37,6 +37,8 @@ class ScoreHistoryEntry:
     gates: tuple[dict[str, Any], ...]
     top_fixes: tuple[str, ...]
     score_delta: int | None
+    arc_score: int | None = None
+    arc_delta: int | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -49,6 +51,8 @@ class ScoreHistoryEntry:
             "gates": [dict(gate) for gate in self.gates],
             "top_fixes": list(self.top_fixes),
             "score_delta": self.score_delta,
+            "arc_score": self.arc_score,
+            "arc_delta": self.arc_delta,
         }
 
 
@@ -124,6 +128,32 @@ def load_score_history(history_path: Path, project_id: str) -> dict[str, Any]:
     }
 
 
+def _coerce_optional_int(value: Any) -> int | None:
+    """Return int(value) if convertible, otherwise None.
+
+    Distinct from ``_coerce_int`` which defaults to ``0``; here ``None``
+    semantics matter because "no arc available" is meaningfully different
+    from "arc score of zero".
+    """
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _previous_arc_score(previous_entries: list[dict[str, Any]]) -> int | None:
+    """Walk previous entries newest-first and return the last arc_score set."""
+    for entry in reversed(previous_entries):
+        if not isinstance(entry, dict):
+            continue
+        candidate = _coerce_optional_int(entry.get("arc_score"))
+        if candidate is not None:
+            return candidate
+    return None
+
+
 def append_score_history(
     history: dict[str, Any],
     project: BookProject,
@@ -131,11 +161,15 @@ def append_score_history(
     round_id: str | None = None,
     mode: str = "quick_qa",
     now: datetime | None = None,
+    arc_score: int | None = None,
 ) -> dict[str, Any]:
     """Return a new history dict with one entry appended.
 
     Immutable: never mutates the input dict. The new entry computes its own
-    score_delta against the most recent prior entry.
+    score_delta against the most recent prior entry. ``arc_score`` is the
+    optional chapter-arc score (0–100) for the same round; when supplied the
+    entry also records an ``arc_delta`` against the most recent prior entry
+    that had an arc_score (skipping rounds that ran without arc analysis).
     """
     timestamp = (now or datetime.now()).isoformat(timespec="seconds")
     previous_entries = list(history.get("entries") or [])
@@ -149,6 +183,14 @@ def append_score_history(
         current_score - previous_score if previous_score is not None else None
     )
 
+    current_arc = _coerce_optional_int(arc_score)
+    previous_arc = _previous_arc_score(previous_entries)
+    arc_delta: int | None
+    if current_arc is None or previous_arc is None:
+        arc_delta = None
+    else:
+        arc_delta = current_arc - previous_arc
+
     entry = ScoreHistoryEntry(
         timestamp=timestamp,
         round_id=round_id,
@@ -159,6 +201,8 @@ def append_score_history(
         gates=_gate_summary(qa),
         top_fixes=_top_fixes(qa),
         score_delta=score_delta,
+        arc_score=current_arc,
+        arc_delta=arc_delta,
     )
 
     new_entries = previous_entries + [entry.to_json()]
@@ -311,8 +355,15 @@ def render_score_history_markdown(
         lines.append(f"Trend: `{spark}` ({scores[0]} -> {scores[-1]})")
         lines.append("")
 
-    lines.append("| Datum | Runde | Modus | Score | Delta | Decision |")
-    lines.append("|---|---|---|---|---|---|")
+    has_arc = any(
+        _coerce_optional_int(entry.get("arc_score")) is not None for entry in entries
+    )
+    if has_arc:
+        lines.append("| Datum | Runde | Modus | Score | Delta | Arc | Decision |")
+        lines.append("|---|---|---|---|---|---|---|")
+    else:
+        lines.append("| Datum | Runde | Modus | Score | Delta | Decision |")
+        lines.append("|---|---|---|---|---|---|")
     for entry in entries:
         ts = str(entry.get("timestamp", ""))
         round_id = entry.get("round_id") or "-"
@@ -321,7 +372,26 @@ def render_score_history_markdown(
         delta = entry.get("score_delta")
         delta_text = _format_delta(delta if delta is None else _coerce_int(delta))
         decision = str(entry.get("decision", "HOLD"))
-        lines.append(f"| {ts} | {round_id} | {mode} | {score}/100 | {delta_text} | {decision} |")
+        if has_arc:
+            arc = _coerce_optional_int(entry.get("arc_score"))
+            arc_delta = _coerce_optional_int(entry.get("arc_delta"))
+            if arc is None:
+                arc_text = "-"
+            elif arc_delta is None:
+                arc_text = f"{arc}/100"
+            elif arc_delta > 0:
+                arc_text = f"{arc}/100 (+{arc_delta})"
+            elif arc_delta == 0:
+                arc_text = f"{arc}/100 (±0)"
+            else:
+                arc_text = f"{arc}/100 ({arc_delta})"
+            lines.append(
+                f"| {ts} | {round_id} | {mode} | {score}/100 | {delta_text} | {arc_text} | {decision} |"
+            )
+        else:
+            lines.append(
+                f"| {ts} | {round_id} | {mode} | {score}/100 | {delta_text} | {decision} |"
+            )
 
     gate_trends = build_gate_trends(entries)
     lines.extend(_render_gate_trend_section(gate_trends))
