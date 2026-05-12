@@ -347,6 +347,47 @@ def _top_persona_payload(
     }
 
 
+def _persona_match_payload(persona_match: Any) -> dict | None:
+    """Compact persona-match highlight for beginner_summary.
+
+    Returns a small immutable dict with the aggregate score, status and
+    the weakest persona — the entry that drags the average down and is
+    the most concrete fix lever for the author. Returns ``None`` when
+    there is no match report or no entries with measurable tokens at
+    all (e.g. all personas only carried stop words).
+
+    The pipeline always computes the match report; the section is only
+    skipped at render time when the description is missing — in that
+    case the renderer surfaces a "Beschreibung fehlt" hint instead of a
+    misleading zero score. The renderer reads ``description_present``
+    from this payload.
+    """
+
+    if persona_match is None:
+        return None
+    entries = list(getattr(persona_match, "entries", ()) or ())
+    if not entries:
+        return None
+    measurable = [entry for entry in entries if int(getattr(entry, "total_tokens", 0)) > 0]
+    if not measurable:
+        return None
+    weakest = min(
+        measurable,
+        key=lambda entry: (int(entry.score), entry.label),
+    )
+    return {
+        "overall_score": int(persona_match.overall_score),
+        "status": str(persona_match.status),
+        "description_present": bool(persona_match.description_present),
+        "lead_lines_present": bool(persona_match.lead_lines_present),
+        "total_personas": len(entries),
+        "measurable_personas": len(measurable),
+        "weakest_label": str(weakest.label),
+        "weakest_score": int(weakest.score),
+        "weakest_missing": tuple(weakest.missing_tokens),
+    }
+
+
 def _top_collision_risk_payload(
     positioning: PositioningReport | None,
 ) -> dict | None:
@@ -756,6 +797,11 @@ class PublisherPipeline:
             top_collision_risk = _top_collision_risk_payload(positioning)
             persona_report = build_persona_report(project, chapter_titles=chapter_titles)
             top_persona = _top_persona_payload(persona_report)
+            persona_match = build_persona_match_report(
+                persona_report,
+                project.amazon_description,
+            )
+            persona_match_highlight = _persona_match_payload(persona_match)
             self.writer.write_text(
                 "beginner_summary.md",
                 render_beginner_summary(
@@ -772,6 +818,7 @@ class PublisherPipeline:
                     top_persona=top_persona,
                     top_arc=top_arc,
                     top_chapter_balance=top_chapter_balance,
+                    persona_match=persona_match_highlight,
                 ),
                 project.project_id,
             )
@@ -789,10 +836,6 @@ class PublisherPipeline:
                     missing_phases=arc_json.get("missing_phases") or [],
                 )
             self.writer.write_text("kindle_preview_check.md", render_kindle_preview_check(project), project.project_id)
-            persona_match = build_persona_match_report(
-                persona_report,
-                project.amazon_description,
-            )
             persona_md = render_persona_report_markdown(project, persona_report)
             match_section = render_persona_match_section(persona_match)
             if match_section:

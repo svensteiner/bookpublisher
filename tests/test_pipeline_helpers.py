@@ -14,7 +14,9 @@ from modules.competitive_positioning import (
 )
 from modules.kdp_keywords import KDPKeyword
 from modules.personas import BuyerPersona, PersonaReport
+from modules.persona_match import build_persona_match_report
 from modules.pipeline import (
+    _persona_match_payload,
     _round_delta_payload,
     _score_history_payload,
     _top_arc_payload,
@@ -1227,3 +1229,119 @@ def test_top_chapter_balance_payload_is_immutable_against_caller_mutation():
     assert fresh is not None
     assert fresh["fix"] == "Original fix"
     assert fresh["index"] == 4
+
+
+# --- _persona_match_payload --------------------------------------------------
+
+
+def _match_persona(
+    label: str = "Test",
+    problem: str = "alpha bravo charlie",
+    motive: str = "delta echo",
+    quote: str = "alpha echo",
+) -> BuyerPersona:
+    return BuyerPersona(
+        label=label,
+        age_range="30-40",
+        job="-",
+        problem=problem,
+        buying_motive=motive,
+        anchor_quote=quote,
+    )
+
+
+def _match_report(personas: list[BuyerPersona]) -> PersonaReport:
+    return PersonaReport(
+        niche_key="all",
+        niche_label="Allgemein",
+        niche_confidence=50,
+        audience="-",
+        subject="-",
+        personas=personas,
+    )
+
+
+def test_persona_match_payload_returns_none_for_none_input():
+    assert _persona_match_payload(None) is None
+
+
+def test_persona_match_payload_returns_none_when_no_entries():
+    report = build_persona_match_report(_match_report([]), "Eine Beschreibung.")
+    assert _persona_match_payload(report) is None
+
+
+def test_persona_match_payload_returns_none_when_no_measurable_personas():
+    # Persona made entirely of stop words -> total_tokens == 0 for that persona
+    stop_only = BuyerPersona(
+        label="Stop",
+        age_range="-",
+        job="-",
+        problem="die der das",
+        buying_motive="und mit von",
+        anchor_quote="auf bei",
+    )
+    report = build_persona_match_report(_match_report([stop_only]), "alpha bravo.")
+    assert _persona_match_payload(report) is None
+
+
+def test_persona_match_payload_picks_weakest_persona():
+    strong = _match_persona(
+        label="Strong",
+        problem="alpha bravo",
+        motive="alpha bravo",
+        quote="alpha",
+    )
+    weak = _match_persona(
+        label="Weak",
+        problem="november oscar papa",
+        motive="quebec romeo",
+        quote="sierra",
+    )
+    persona_report = _match_report([strong, weak])
+    match = build_persona_match_report(persona_report, "alpha bravo charlie")
+
+    payload = _persona_match_payload(match)
+
+    assert payload is not None
+    assert payload["weakest_label"] == "Weak"
+    assert payload["weakest_score"] < payload["overall_score"]
+    assert payload["measurable_personas"] == 2
+    assert payload["total_personas"] == 2
+
+
+def test_persona_match_payload_carries_description_present_flag():
+    report = build_persona_match_report(_match_report([_match_persona()]), None)
+    payload = _persona_match_payload(report)
+    assert payload is not None
+    assert payload["description_present"] is False
+
+
+def test_persona_match_payload_is_immutable_against_caller_mutation():
+    match = build_persona_match_report(
+        _match_report([_match_persona()]),
+        "alpha bravo charlie",
+    )
+
+    payload = _persona_match_payload(match)
+    assert payload is not None
+    payload["overall_score"] = -1
+    payload["weakest_label"] = "TAMPERED"
+
+    fresh = _persona_match_payload(match)
+    assert fresh is not None
+    assert fresh["overall_score"] != -1
+    assert fresh["weakest_label"] != "TAMPERED"
+
+
+def test_persona_match_payload_weakest_missing_tokens_are_tuple():
+    weak = _match_persona(
+        label="Weak",
+        problem="alpha bravo charlie",
+        motive="delta echo",
+        quote="foxtrot",
+    )
+    match = build_persona_match_report(_match_report([weak]), "xxxx yyyy")
+    payload = _persona_match_payload(match)
+    assert payload is not None
+    assert isinstance(payload["weakest_missing"], tuple)
+    assert len(payload["weakest_missing"]) <= 5

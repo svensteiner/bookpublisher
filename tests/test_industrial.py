@@ -957,6 +957,99 @@ def test_render_beginner_summary_top_persona_falls_back_to_default_label():
     assert "Motive Y" in summary
 
 
+def test_render_beginner_summary_persona_match_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    persona_match = {
+        "overall_score": 78,
+        "status": "READY",
+        "description_present": True,
+        "lead_lines_present": True,
+        "total_personas": 3,
+        "measurable_personas": 3,
+        "weakest_label": "Die skeptische CFO",
+        "weakest_score": 55,
+        "weakest_missing": ("zahlen", "cases", "bilanz"),
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, persona_match=persona_match
+    )
+    assert "## Persona-Match" in summary
+    assert "78/100" in summary
+    assert "READY" in summary
+    assert "Die skeptische CFO" in summary
+    assert "55/100" in summary
+    assert "zahlen" in summary
+    assert "`buyer_personas.md`" in summary
+
+
+def test_render_beginner_summary_persona_match_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, persona_match=None
+    )
+    assert "## Persona-Match" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, persona_match={}
+    )
+    assert "## Persona-Match" not in summary_empty
+
+
+def test_render_beginner_summary_persona_match_section_absent_when_no_personas():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    persona_match = {
+        "overall_score": 0,
+        "status": "FIX",
+        "description_present": True,
+        "lead_lines_present": True,
+        "total_personas": 0,
+        "measurable_personas": 0,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, persona_match=persona_match
+    )
+    assert "## Persona-Match" not in summary
+
+
+def test_render_beginner_summary_persona_match_shows_missing_description_hint():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    persona_match = {
+        "overall_score": 0,
+        "status": "FIX",
+        "description_present": False,
+        "lead_lines_present": False,
+        "total_personas": 3,
+        "measurable_personas": 3,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, persona_match=persona_match
+    )
+    assert "## Persona-Match" in summary
+    assert "Keine Amazon-Beschreibung" in summary
+    # No score number should be surfaced in the missing-description path
+    assert "0/100" not in summary.split("## Persona-Match")[1].split("##")[0]
+
+
+def test_render_beginner_summary_persona_match_omits_weakest_line_when_data_partial():
+    """Partial payload without weakest_label still renders the headline cleanly."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    persona_match = {
+        "overall_score": 60,
+        "status": "REVIEW",
+        "description_present": True,
+        "lead_lines_present": True,
+        "total_personas": 2,
+        "measurable_personas": 2,
+        # no weakest_* fields
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, persona_match=persona_match
+    )
+    assert "## Persona-Match" in summary
+    assert "60/100" in summary
+    # Renderer should not crash and should not invent a "Schwächste Persona" line
+    assert "Schwächste Persona" not in summary
+
+
 def test_render_beginner_summary_top_positioning_low_strength_uses_review_badge():
     """A strength of 70 must render with the REVIEW (yellow) badge."""
     result = build_industrial_qa(_project(manuscript=None, cover=None))

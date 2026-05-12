@@ -955,6 +955,70 @@ def _render_top_persona(
     return lines
 
 
+def _render_persona_match_highlight(
+    persona_match: dict[str, Any] | None,
+) -> list[str]:
+    """Render the persona vs. description match-score highlight.
+
+    Surfaces the aggregate persona-match score (computed in
+    ``modules.persona_match``) directly in beginner_summary so the
+    author sees at a glance whether their Amazon description targets
+    the personas the agent identified. Returns an empty list when no
+    payload is provided, when there are no personas with measurable
+    tokens, or when the description is missing — surfacing a zero
+    score with no context would be misleading.
+    """
+
+    if not persona_match:
+        return []
+    description_present = bool(persona_match.get("description_present"))
+    total_personas = int(persona_match.get("total_personas") or 0)
+    if total_personas <= 0:
+        return []
+    overall_score = int(persona_match.get("overall_score") or 0)
+    status = str(persona_match.get("status") or "").strip()
+    badge, _ = score_badge(overall_score)
+
+    lines: list[str] = [
+        "## Persona-Match",
+        "",
+    ]
+    if not description_present:
+        lines.extend([
+            "Keine Amazon-Beschreibung in den Metadaten — Match nicht messbar.",
+            "Trage die Beschreibung in `metadata.md` ein, dann erscheint hier ein Score.",
+            "",
+        ])
+        return lines
+
+    status_text = f" ({status})" if status else ""
+    lines.append(
+        f"{badge} **{overall_score}/100**{status_text}"
+        " — wie stark die ersten drei Beschreibungs-Zeilen die Persona-Anker treffen."
+    )
+
+    weakest_label = str(persona_match.get("weakest_label") or "").strip()
+    weakest_score = persona_match.get("weakest_score")
+    weakest_missing = persona_match.get("weakest_missing") or []
+    if weakest_label and isinstance(weakest_score, int):
+        missing_text = ", ".join(str(token) for token in list(weakest_missing)[:3])
+        if missing_text:
+            lines.append(
+                f"- Schwächste Persona: **{weakest_label}** ({weakest_score}/100)"
+                f" — fehlen z.B.: {missing_text}"
+            )
+        else:
+            lines.append(
+                f"- Schwächste Persona: **{weakest_label}** ({weakest_score}/100)"
+            )
+    lines.extend([
+        "",
+        "Detail-Tabelle siehe `buyer_personas.md` (Match-Score-Sektion).",
+        "",
+    ])
+    return lines
+
+
 def _render_top_positioning(
     top_positioning: dict[str, Any] | None,
 ) -> list[str]:
@@ -1083,6 +1147,7 @@ def render_beginner_summary(
     top_persona: dict[str, Any] | None = None,
     top_arc: dict[str, Any] | None = None,
     top_chapter_balance: dict[str, Any] | None = None,
+    persona_match: dict[str, Any] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -1144,6 +1209,7 @@ def render_beginner_summary(
     lines.extend(_render_weakest_sample(weakest_sample))
     lines.extend(_render_top_arc(top_arc))
     lines.extend(_render_top_persona(top_persona))
+    lines.extend(_render_persona_match_highlight(persona_match))
     lines.extend(_render_top_positioning(top_positioning))
     lines.extend(_render_top_collision_risk(top_collision_risk))
     lines.extend(_render_top_rewrite(top_rewrite))
