@@ -17,7 +17,11 @@ from modules.config import AppConfig
 from modules.cover import render_cover_review
 from modules.discovery import BookProject, discover_books, render_discovery_markdown
 from modules.industrial import build_industrial_qa, render_beginner_summary, render_industrial_qa_markdown
-from modules.kdp_keywords import build_kdp_keywords, render_kdp_keywords_report_markdown
+from modules.kdp_keywords import (
+    KDPKeyword,
+    build_kdp_keywords,
+    render_kdp_keywords_report_markdown,
+)
 from modules.llm import LLMClient
 from modules.personas import build_persona_report, render_persona_report_markdown
 from modules.review import (
@@ -236,6 +240,67 @@ def _score_history_payload(
     }
 
 
+def _top_kdp_keywords_payload(
+    keywords: list[KDPKeyword] | None,
+    *,
+    limit: int = 3,
+) -> list[dict] | None:
+    """Pick the top-N KDP keyword slots for a beginner_summary copy block.
+
+    Prefers source diversity — the first keyword from each distinct source
+    family (``subject_format``, ``subject_audience``, ``audience_format``,
+    ``anchor_pair`` …) is selected before any duplicate-source keyword.
+    The canonical pick is ``subject_audience + audience_format +
+    anchor_pair`` rather than three near-identical ``subject_format``
+    variants, so the author sees a *spread* of search intents.
+
+    Falls back to ordered keywords if source diversity does not fill the
+    limit. Returns ``None`` when no keywords were generated (so the
+    section is omitted entirely) and ``[]`` when ``limit <= 0``.
+
+    Each returned dict carries ``text``, ``char_count``, ``source`` and
+    ``rationale`` — exactly what the renderer needs without re-reading the
+    KDPKeyword object.
+    """
+
+    if not keywords:
+        return None
+    cap = max(0, limit)
+    if cap == 0:
+        return []
+    picked_texts: set[str] = set()
+    picked: list[dict] = []
+    seen_sources: set[str] = set()
+    for keyword in keywords:
+        if keyword.source in seen_sources:
+            continue
+        if keyword.text in picked_texts:
+            continue
+        seen_sources.add(keyword.source)
+        picked.append({
+            "text": keyword.text,
+            "char_count": keyword.char_count,
+            "source": keyword.source,
+            "rationale": keyword.rationale,
+        })
+        picked_texts.add(keyword.text)
+        if len(picked) >= cap:
+            return picked
+    for keyword in keywords:
+        if len(picked) >= cap:
+            break
+        if keyword.text in picked_texts:
+            continue
+        picked.append({
+            "text": keyword.text,
+            "char_count": keyword.char_count,
+            "source": keyword.source,
+            "rationale": keyword.rationale,
+        })
+        picked_texts.add(keyword.text)
+    return picked
+
+
 def _weakest_sample_payload(sample_json: dict | None) -> dict | None:
     """Extract the highest-risk Kindle-Sample section from a sample-scan payload.
 
@@ -439,6 +504,8 @@ class PublisherPipeline:
             history = load_score_history(history_path, project.project_id)
             history = append_score_history(history, project, qa, round_id=round_id, mode=mode)
             score_history_highlight = _score_history_payload(history)
+            kdp_keywords = build_kdp_keywords(project)
+            top_kdp_keywords = _top_kdp_keywords_payload(kdp_keywords)
             self.writer.write_text(
                 "beginner_summary.md",
                 render_beginner_summary(
@@ -449,6 +516,7 @@ class PublisherPipeline:
                     top_rewrite=top_rewrite,
                     round_delta_highlight=round_delta_highlight,
                     score_history_highlight=score_history_highlight,
+                    top_kdp_keywords=top_kdp_keywords,
                 ),
                 project.project_id,
             )
@@ -542,7 +610,6 @@ class PublisherPipeline:
                 angle_count=len(positioning.unique_angles),
                 risk_count=len(positioning.collision_risks),
             )
-            kdp_keywords = build_kdp_keywords(project)
             self.writer.write_text(
                 "kdp_keywords.md",
                 render_kdp_keywords_report_markdown(project, kdp_keywords),

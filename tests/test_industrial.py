@@ -693,6 +693,83 @@ def test_render_beginner_summary_score_history_tolerates_partial_entries():
     assert "85/100" in summary
 
 
+def test_render_beginner_summary_top_kdp_keywords_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_keywords = [
+        {
+            "text": "selbststaendigkeit ratgeber",
+            "char_count": 27,
+            "source": "subject_format",
+            "rationale": "Subject + Format — typischer KDP-Suchpfad.",
+        },
+        {
+            "text": "ratgeber fuer gruender",
+            "char_count": 22,
+            "source": "audience_format",
+            "rationale": "Format + Zielgruppe — Long-Tail-Treffer.",
+        },
+        {
+            "text": "methode checkliste",
+            "char_count": 18,
+            "source": "anchor_pair",
+            "rationale": "Anker-Keyword-Paar — organische Suche.",
+        },
+    ]
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_kdp_keywords=top_keywords
+    )
+    assert "## KDP-Keywords (Top-3)" in summary
+    assert "`selbststaendigkeit ratgeber`" in summary
+    assert "`ratgeber fuer gruender`" in summary
+    assert "`methode checkliste`" in summary
+    assert "Zeichen: 27/50" in summary
+    assert "Long-Tail-Treffer" in summary
+    assert "`kdp_keywords.md`" in summary
+
+
+def test_render_beginner_summary_top_kdp_keywords_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary_none = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_kdp_keywords=None
+    )
+    assert "## KDP-Keywords (Top-3)" not in summary_none
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_kdp_keywords=[]
+    )
+    assert "## KDP-Keywords (Top-3)" not in summary_empty
+
+
+def test_render_beginner_summary_top_kdp_keywords_handles_partial_dicts():
+    """Missing rationale must not yield an empty 'Warum:' line."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_keywords = [
+        {"text": "ratgeber praxis", "char_count": 15, "source": "fallback"},
+    ]
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_kdp_keywords=top_keywords
+    )
+    assert "## KDP-Keywords (Top-3)" in summary
+    assert "`ratgeber praxis`" in summary
+    assert "Warum:" not in summary
+
+
+def test_render_beginner_summary_top_kdp_keywords_skips_empty_text_entries():
+    """A whitespace-only ``text`` entry must not produce a backtick-only line."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_keywords = [
+        {"text": "   ", "char_count": 0, "source": "fallback", "rationale": "skip"},
+        {"text": "buch ratgeber", "char_count": 13, "source": "fallback", "rationale": "ok"},
+    ]
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_kdp_keywords=top_keywords
+    )
+    assert "## KDP-Keywords (Top-3)" in summary
+    assert "`buch ratgeber`" in summary
+    # Empty text must not appear as a numbered item.
+    assert "1. ``" not in summary
+    assert "2. ``" not in summary
+
+
 def test_render_beginner_summary_handles_empty_gate_list():
     minimal_report = {
         "decision": "GO_AFTER_FIXES",

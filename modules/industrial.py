@@ -716,6 +716,46 @@ def _render_score_history_highlight(
     return lines
 
 
+def _render_top_kdp_keywords(
+    top_keywords: list[dict[str, Any]] | None,
+) -> list[str]:
+    """Render the 'KDP-Keywords (Top-3)' block from the top-keyword payload.
+
+    Each dict is expected to carry ``text``, ``char_count``, ``source``
+    and ``rationale`` (matching ``KDPKeyword.to_json``). Returns an empty
+    list when no keywords are provided so the section is omitted entirely
+    — the full kdp_keywords.md remains the source of truth for all 7
+    slots and the spielregeln-Block.
+    """
+
+    if not top_keywords:
+        return []
+    lines: list[str] = [
+        "## KDP-Keywords (Top-3)",
+        "",
+        (
+            "Die drei stärksten Slots aus der 7er-Liste — sofort ins KDP-Backend "
+            "übernehmbar (Buchdetails > Schlüsselwörter)."
+        ),
+        "",
+    ]
+    for idx, keyword in enumerate(top_keywords, start=1):
+        text = str(keyword.get("text") or "").strip()
+        if not text:
+            continue
+        char_count = int(keyword.get("char_count") or len(text))
+        rationale = str(keyword.get("rationale") or "").strip()
+        lines.append(f"{idx}. `{text}`  *(Zeichen: {char_count}/50)*")
+        if rationale:
+            lines.append(f"   Warum: {rationale}")
+    lines.extend([
+        "",
+        "Alle 7 Slots siehe `kdp_keywords.md`.",
+        "",
+    ])
+    return lines
+
+
 def _render_weakest_sample(weakest_sample: dict[str, Any] | None) -> list[str]:
     """Render the 'Schwächster Sample-Abschnitt' block.
 
@@ -755,6 +795,7 @@ def render_beginner_summary(
     top_rewrite: dict[str, Any] | None = None,
     round_delta_highlight: dict[str, Any] | None = None,
     score_history_highlight: dict[str, Any] | None = None,
+    top_kdp_keywords: list[dict[str, Any]] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -814,6 +855,7 @@ def render_beginner_summary(
     lines.extend(_render_weakest_chapters(weakest_chapters))
     lines.extend(_render_weakest_sample(weakest_sample))
     lines.extend(_render_top_rewrite(top_rewrite))
+    lines.extend(_render_top_kdp_keywords(top_kdp_keywords))
 
     lines.extend([
         "## Was bedeutet das praktisch?",

@@ -7,14 +7,25 @@ must stay isolated so beginner_summary stays trustworthy.
 
 from __future__ import annotations
 
+from modules.kdp_keywords import KDPKeyword
 from modules.pipeline import (
     _round_delta_payload,
     _score_history_payload,
+    _top_kdp_keywords_payload,
     _top_rewrite_payload,
     _weakest_chapter_payload,
     _weakest_sample_payload,
 )
 from modules.round_delta import compute_round_delta
+
+
+def _kw(text: str, source: str, *, char_count: int | None = None, rationale: str = "r") -> KDPKeyword:
+    return KDPKeyword(
+        text=text,
+        char_count=char_count if char_count is not None else len(text),
+        source=source,
+        rationale=rationale,
+    )
 
 
 def _chap(index: int, title: str, overall: int, fix: str = "fix me") -> dict:
@@ -540,3 +551,87 @@ def test_score_history_payload_is_immutable_against_caller_mutation():
     assert payload is not None
     payload["series"][0]["score"] = 999
     assert history["entries"][0]["industrial_score"] == 70
+
+
+
+# ─── _top_kdp_keywords_payload ─────────────────────────────────────────
+
+def test_top_kdp_keywords_payload_returns_none_when_no_keywords():
+    assert _top_kdp_keywords_payload(None) is None
+    assert _top_kdp_keywords_payload([]) is None
+
+
+def test_top_kdp_keywords_payload_zero_limit_returns_empty_list():
+    kws = [_kw("a b c", "subject_format")]
+    assert _top_kdp_keywords_payload(kws, limit=0) == []
+
+
+def test_top_kdp_keywords_payload_prefers_source_diversity_over_order():
+    """Three subject_format variants must not crowd out other sources."""
+    kws = [
+        _kw("subject ratgeber", "subject_format", rationale="r-sf-1"),
+        _kw("subject buch", "subject_format", rationale="r-sf-2"),
+        _kw("subject praxis", "subject_format", rationale="r-sf-3"),
+        _kw("ratgeber fuer x", "audience_format", rationale="r-af"),
+        _kw("anker eins", "anchor_pair", rationale="r-ap"),
+    ]
+    top = _top_kdp_keywords_payload(kws, limit=3)
+    assert top is not None
+    sources = [item["source"] for item in top]
+    assert sources == ["subject_format", "audience_format", "anchor_pair"]
+    assert top[0]["text"] == "subject ratgeber"
+    assert top[1]["text"] == "ratgeber fuer x"
+    assert top[2]["text"] == "anker eins"
+
+
+def test_top_kdp_keywords_payload_falls_back_to_order_when_diversity_insufficient():
+    """If only one source family exists, fill remaining slots in order."""
+    kws = [
+        _kw("variant eins", "subject_format"),
+        _kw("variant zwei", "subject_format"),
+        _kw("variant drei", "subject_format"),
+    ]
+    top = _top_kdp_keywords_payload(kws, limit=3)
+    assert top is not None
+    assert [item["text"] for item in top] == ["variant eins", "variant zwei", "variant drei"]
+
+
+def test_top_kdp_keywords_payload_clamps_to_available_keywords():
+    kws = [_kw("a", "subject_format"), _kw("b", "anchor_pair")]
+    top = _top_kdp_keywords_payload(kws, limit=5)
+    assert top is not None
+    assert len(top) == 2
+
+
+def test_top_kdp_keywords_payload_payload_carries_renderer_fields():
+    kws = [_kw("ratgeber praxis", "subject_format", char_count=15, rationale="why")]
+    top = _top_kdp_keywords_payload(kws, limit=1)
+    assert top is not None
+    assert top[0] == {
+        "text": "ratgeber praxis",
+        "char_count": 15,
+        "source": "subject_format",
+        "rationale": "why",
+    }
+
+
+def test_top_kdp_keywords_payload_is_immutable_against_caller_mutation():
+    """Mutating the returned payload must not affect the KDPKeyword source."""
+    kws = [_kw("ratgeber", "subject_format", rationale="why")]
+    top = _top_kdp_keywords_payload(kws, limit=1)
+    assert top is not None
+    top[0]["text"] = "mutated"
+    assert kws[0].text == "ratgeber"
+
+
+def test_top_kdp_keywords_payload_dedups_when_same_text_repeated():
+    """If two keywords share the same text but different sources, we keep one."""
+    kws = [
+        _kw("a", "subject_format"),
+        _kw("a", "anchor_pair"),  # same text — skipped after diversity round
+        _kw("b", "audience_format"),
+    ]
+    top = _top_kdp_keywords_payload(kws, limit=3)
+    assert top is not None
+    texts = [item["text"] for item in top]
+    assert texts.count("a") == 1
