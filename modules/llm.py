@@ -21,6 +21,13 @@ class LLMClient:
         except ImportError:
             pass
         self.api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        # Fallback-usage tracking — surfaced to beginner_summary so the
+        # author can tell when a run leaned on the cheaper fallback model
+        # (lower review depth) rather than the primary model.
+        self._primary_calls: int = 0
+        self._fallback_calls: int = 0
+        self._last_primary_model: str | None = None
+        self._last_fallback_model: str | None = None
 
     def require_api_key(self) -> None:
         if not self.api_key:
@@ -52,11 +59,13 @@ class LLMClient:
     def complete(self, system: str, user: str, model: str | None = None) -> str:
         primary_model = model or self.config.default_model
         fallback_model = self.config.fallback_model
+        self._last_primary_model = primary_model
 
         self.logger.log("model_call_started", model=primary_model)
         try:
             text = self._call_model(primary_model, system, user)
             self.logger.log("model_call_completed", model=primary_model, chars=len(text))
+            self._primary_calls += 1
             return text
         except Exception as primary_error:
             self.logger.log(
@@ -83,6 +92,8 @@ class LLMClient:
                     fallback_model=fallback_model,
                     chars=len(text),
                 )
+                self._fallback_calls += 1
+                self._last_fallback_model = fallback_model
                 return text
             except Exception as fallback_error:
                 self.logger.log(
@@ -96,6 +107,30 @@ class LLMClient:
                     f"Original error: {primary_error}. "
                     f"Fallback error: {fallback_error}."
                 ) from fallback_error
+
+    def fallback_summary(self) -> dict[str, Any] | None:
+        """Return a compact summary of fallback-model usage in this run.
+
+        Returns ``None`` when no model calls have happened yet OR no
+        fallback was ever triggered — that's the silent-success case
+        the beginner_summary should not surface.
+
+        When at least one fallback call succeeded, returns a dict with
+        the primary/fallback model names and the call counts so the
+        author understands which model produced the review depth.
+        """
+
+        if self._fallback_calls <= 0:
+            return None
+        total_calls = self._primary_calls + self._fallback_calls
+        return {
+            "fallback_used": True,
+            "primary_model": self._last_primary_model,
+            "fallback_model": self._last_fallback_model,
+            "primary_calls": self._primary_calls,
+            "fallback_calls": self._fallback_calls,
+            "total_calls": total_calls,
+        }
 
     def complete_json(self, system: str, user: str) -> dict[str, Any]:
         text = self.complete(system, user)

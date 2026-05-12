@@ -821,6 +821,7 @@ class PublisherPipeline:
                     top_arc=top_arc,
                     top_chapter_balance=top_chapter_balance,
                     persona_match=persona_match_highlight,
+                    llm_fallback=self.llm.fallback_summary(),
                 ),
                 project.project_id,
             )

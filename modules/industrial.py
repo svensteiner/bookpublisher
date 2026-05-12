@@ -936,6 +936,61 @@ def _render_top_persona(
     return lines
 
 
+def _render_llm_fallback_notice(
+    llm_fallback: dict[str, Any] | None,
+) -> list[str]:
+    """Render a ⚠️ notice when a run leaned on the fallback model.
+
+    The author needs to know when the primary model failed and the
+    cheaper / smaller fallback produced the review depth — that way a
+    surprisingly mild verdict is contextualized rather than mistaken
+    for a free pass. Returns ``[]`` when no fallback was used (the
+    silent-success case) so the summary stays clean.
+    """
+
+    if not llm_fallback:
+        return []
+    if not bool(llm_fallback.get("fallback_used")):
+        return []
+    primary = str(llm_fallback.get("primary_model") or "").strip()
+    fallback = str(llm_fallback.get("fallback_model") or "").strip()
+    fallback_calls = int(llm_fallback.get("fallback_calls") or 0)
+    total_calls = int(llm_fallback.get("total_calls") or 0)
+    if fallback_calls <= 0:
+        return []
+
+    lines: list[str] = [
+        "## ⚠️ Modell-Fallback aktiv",
+        "",
+        (
+            "Das primäre Bewertungs-Modell war für mindestens einen Aufruf"
+            " in dieser Runde nicht erreichbar. Der Agent hat automatisch"
+            " auf das Fallback-Modell umgestellt — die Tiefe der Review"
+            " ist dadurch niedriger als bei einer normalen Runde."
+        ),
+        "",
+    ]
+    if primary and fallback:
+        lines.append(f"- **Primär:** `{primary}` (fehlgeschlagen)")
+        lines.append(f"- **Fallback:** `{fallback}` (eingesprungen)")
+    elif fallback:
+        lines.append(f"- **Fallback:** `{fallback}` (eingesprungen)")
+    if total_calls > 0:
+        lines.append(
+            f"- **Aufrufe in dieser Runde:** {fallback_calls} via Fallback,"
+            f" {total_calls} insgesamt."
+        )
+    lines.extend([
+        "",
+        (
+            "Empfehlung: Starte vor der nächsten KDP-Veröffentlichung eine"
+            " weitere Runde, wenn das primäre Modell wieder erreichbar ist."
+        ),
+        "",
+    ])
+    return lines
+
+
 def _render_persona_match_highlight(
     persona_match: dict[str, Any] | None,
 ) -> list[str]:
@@ -1129,6 +1184,7 @@ def render_beginner_summary(
     top_arc: dict[str, Any] | None = None,
     top_chapter_balance: dict[str, Any] | None = None,
     persona_match: dict[str, Any] | None = None,
+    llm_fallback: dict[str, Any] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -1183,6 +1239,7 @@ def render_beginner_summary(
         lines.append("Nichts Blockierendes. Mache nur noch eine menschliche Endkontrolle.")
 
     lines.append("")
+    lines.extend(_render_llm_fallback_notice(llm_fallback))
     lines.extend(_render_round_delta_highlight(round_delta_highlight))
     lines.extend(_render_score_history_highlight(score_history_highlight))
     lines.extend(_render_weakest_chapters(weakest_chapters))

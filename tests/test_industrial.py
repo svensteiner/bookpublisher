@@ -1029,6 +1029,89 @@ def test_render_beginner_summary_persona_match_shows_missing_description_hint():
     assert "0/100" not in summary.split("## Persona-Match")[1].split("##")[0]
 
 
+def test_render_beginner_summary_llm_fallback_notice_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    llm_fallback = {
+        "fallback_used": True,
+        "primary_model": "claude-sonnet-4-6",
+        "fallback_model": "claude-haiku-4-5-20251001",
+        "primary_calls": 0,
+        "fallback_calls": 4,
+        "total_calls": 4,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, llm_fallback=llm_fallback
+    )
+    assert "## ⚠️ Modell-Fallback aktiv" in summary
+    assert "claude-sonnet-4-6" in summary
+    assert "claude-haiku-4-5-20251001" in summary
+    assert "4 via Fallback" in summary
+    assert "weitere Runde" in summary
+
+
+def test_render_beginner_summary_llm_fallback_notice_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, llm_fallback=None
+    )
+    assert "Modell-Fallback" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, llm_fallback={}
+    )
+    assert "Modell-Fallback" not in summary_empty
+
+
+def test_render_beginner_summary_llm_fallback_notice_absent_when_not_used():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    llm_fallback = {
+        "fallback_used": False,
+        "primary_model": "claude-sonnet-4-6",
+        "fallback_model": "claude-haiku-4-5-20251001",
+        "primary_calls": 3,
+        "fallback_calls": 0,
+        "total_calls": 3,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, llm_fallback=llm_fallback
+    )
+    assert "Modell-Fallback" not in summary
+
+
+def test_render_beginner_summary_llm_fallback_notice_absent_when_zero_fallback_calls():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    llm_fallback = {
+        "fallback_used": True,  # set but counts say otherwise
+        "primary_model": "claude-sonnet-4-6",
+        "fallback_model": "claude-haiku-4-5-20251001",
+        "primary_calls": 2,
+        "fallback_calls": 0,
+        "total_calls": 2,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, llm_fallback=llm_fallback
+    )
+    assert "Modell-Fallback" not in summary
+
+
+def test_render_beginner_summary_llm_fallback_omits_primary_line_when_unknown():
+    """Partial payload without primary_model still renders the headline cleanly."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    llm_fallback = {
+        "fallback_used": True,
+        "fallback_model": "claude-haiku-4-5-20251001",
+        "primary_calls": 0,
+        "fallback_calls": 1,
+        "total_calls": 1,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, llm_fallback=llm_fallback
+    )
+    assert "## ⚠️ Modell-Fallback aktiv" in summary
+    assert "claude-haiku-4-5-20251001" in summary
+    # No "**Primär:**" line if primary_model is missing
+    assert "**Primär:**" not in summary
+
+
 def test_render_beginner_summary_persona_match_omits_weakest_line_when_data_partial():
     """Partial payload without weakest_label still renders the headline cleanly."""
     result = build_industrial_qa(_project(manuscript=None, cover=None))

@@ -174,3 +174,90 @@ def test_complete_uses_explicit_model_argument_as_primary():
 
     assert result == "fallback answer"
     assert calls == [explicit_model, FALLBACK_MODEL]
+
+
+# --- Fallback-usage summary ------------------------------------------------
+
+
+def test_fallback_summary_returns_none_when_no_calls_made():
+    workspace = runtime_dir("llm_summary_empty")
+    client = _build_client(workspace)
+
+    assert client.fallback_summary() is None
+
+
+def test_fallback_summary_returns_none_when_only_primary_succeeded():
+    workspace = runtime_dir("llm_summary_primary_only")
+    client = _build_client(workspace)
+
+    client._call_model = lambda model, system, user: "primary answer"  # type: ignore[assignment]
+    client.complete("sys", "usr")
+    client.complete("sys", "usr")
+
+    # No fallback was ever needed → no notice should surface.
+    assert client.fallback_summary() is None
+
+
+def test_fallback_summary_reports_models_and_counts_after_fallback():
+    workspace = runtime_dir("llm_summary_after_fallback")
+    client = _build_client(workspace)
+
+    def fake_call(model: str, system: str, user: str) -> str:
+        if model == PRIMARY_MODEL:
+            raise RuntimeError("primary boom")
+        return "fallback answer"
+
+    client._call_model = fake_call  # type: ignore[assignment]
+    client.complete("sys", "usr")
+
+    summary = client.fallback_summary()
+    assert summary is not None
+    assert summary["fallback_used"] is True
+    assert summary["primary_model"] == PRIMARY_MODEL
+    assert summary["fallback_model"] == FALLBACK_MODEL
+    assert summary["primary_calls"] == 0
+    assert summary["fallback_calls"] == 1
+    assert summary["total_calls"] == 1
+
+
+def test_fallback_summary_counts_mixed_primary_and_fallback_calls():
+    workspace = runtime_dir("llm_summary_mixed")
+    client = _build_client(workspace)
+    call_log: list[str] = []
+
+    def fake_call(model: str, system: str, user: str) -> str:
+        call_log.append(model)
+        # First primary attempt fails, subsequent primary attempts succeed.
+        if model == PRIMARY_MODEL and call_log.count(PRIMARY_MODEL) == 1:
+            raise RuntimeError("transient")
+        if model == FALLBACK_MODEL:
+            return "fallback"
+        return "primary"
+
+    client._call_model = fake_call  # type: ignore[assignment]
+    # First call: primary fails → fallback succeeds (fallback_calls=1)
+    client.complete("sys", "usr")
+    # Second call: primary succeeds (primary_calls=1)
+    client.complete("sys", "usr")
+
+    summary = client.fallback_summary()
+    assert summary is not None
+    assert summary["primary_calls"] == 1
+    assert summary["fallback_calls"] == 1
+    assert summary["total_calls"] == 2
+
+
+def test_fallback_summary_stable_when_both_models_fail():
+    workspace = runtime_dir("llm_summary_both_fail")
+    client = _build_client(workspace)
+
+    def fake_call(model: str, system: str, user: str) -> str:
+        raise RuntimeError(f"{model} boom")
+
+    client._call_model = fake_call  # type: ignore[assignment]
+
+    with pytest.raises(ConfigError):
+        client.complete("sys", "usr")
+
+    # Neither primary nor fallback completed → no notice should surface.
+    assert client.fallback_summary() is None
