@@ -284,21 +284,211 @@ def _joined_metadata(project: BookProject) -> str:
     return " ".join(part for part in parts if part)
 
 
+# Niche-key + label aliases the author may write in metadata. Stored
+# ascii-folded lowercase. The map must include both the canonical key
+# (so writing the technical key works) and the prominent display labels.
+_NICHE_KEY_ALIASES: dict[str, NicheKey] = {
+    # ki_und_ai
+    "ki_und_ai": "ki_und_ai",
+    "ki": "ki_und_ai",
+    "ai": "ki_und_ai",
+    "ki/ai": "ki_und_ai",
+    "ki / ai": "ki_und_ai",
+    "ki und ai": "ki_und_ai",
+    "kuenstliche intelligenz": "ki_und_ai",
+    "kuenstliche intelligenz / ki": "ki_und_ai",
+    # finanzen_und_cfo
+    "finanzen_und_cfo": "finanzen_und_cfo",
+    "finanzen": "finanzen_und_cfo",
+    "cfo": "finanzen_und_cfo",
+    "finanzen / cfo": "finanzen_und_cfo",
+    "finanzen / cfo / controlling": "finanzen_und_cfo",
+    "controlling": "finanzen_und_cfo",
+    # vertrieb_und_marketing
+    "vertrieb_und_marketing": "vertrieb_und_marketing",
+    "vertrieb": "vertrieb_und_marketing",
+    "marketing": "vertrieb_und_marketing",
+    "vertrieb / marketing": "vertrieb_und_marketing",
+    "sales": "vertrieb_und_marketing",
+    # produktivitaet_fokus
+    "produktivitaet_fokus": "produktivitaet_fokus",
+    "produktivitaet": "produktivitaet_fokus",
+    "produktivitaet / fokus": "produktivitaet_fokus",
+    "fokus": "produktivitaet_fokus",
+    # fuehrung_team
+    "fuehrung_team": "fuehrung_team",
+    "fuehrung": "fuehrung_team",
+    "fuehrung / team": "fuehrung_team",
+    "leadership": "fuehrung_team",
+    "team": "fuehrung_team",
+    # selbststaendigkeit
+    "selbststaendigkeit": "selbststaendigkeit",
+    "selbststaendigkeit / gruender": "selbststaendigkeit",
+    "gruender": "selbststaendigkeit",
+    "selbststaendig": "selbststaendigkeit",
+    # immobilien_einkommen
+    "immobilien_einkommen": "immobilien_einkommen",
+    "immobilien": "immobilien_einkommen",
+    "immobilien / nebeneinkommen": "immobilien_einkommen",
+    "nebeneinkommen": "immobilien_einkommen",
+    # mindset_gesundheit
+    "mindset_gesundheit": "mindset_gesundheit",
+    "mindset": "mindset_gesundheit",
+    "mindset / gesundheit": "mindset_gesundheit",
+    "gesundheit": "mindset_gesundheit",
+    # allgemeines_sachbuch
+    "allgemeines_sachbuch": "allgemeines_sachbuch",
+    "allgemein": "allgemeines_sachbuch",
+    "allgemeines sachbuch": "allgemeines_sachbuch",
+    "sachbuch": "allgemeines_sachbuch",
+}
+
+# Section header that holds per-niche vocabulary additions.
+_NICHE_VOCAB_HEADER_RE = re.compile(
+    r"^##\s*(?:nischen[\s-]+begriffe|nischen[\s-]+vokabular|niche[\s-]+terms|niche[\s-]+vocab(?:ulary)?)\b.*$",
+    flags=re.I,
+)
+# A line like "KI: agentic, llm, ragstack" or "Finanzen: ebit, cogs".
+_NICHE_VOCAB_INLINE_RE = re.compile(
+    r"^\s*[\-\*\s>]*([\w\säöüß/]+?)\s*:\s*(.+?)\s*$",
+    flags=re.I,
+)
+# Subheader inside the section — e.g. "### KI" or "### Finanzen / CFO".
+_NICHE_VOCAB_SUBHEADER_RE = re.compile(r"^###\s+(.+?)\s*$")
+_NEXT_SECTION_RE_NICHE = re.compile(r"^##\s+", flags=re.I)
+
+
+def _normalize_niche_key_alias(raw: str) -> NicheKey | None:
+    cleaned = _ascii_fold(raw).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -*\t")
+    return _NICHE_KEY_ALIASES.get(cleaned)
+
+
+def _split_vocab_value(value: str) -> list[str]:
+    """Split a "term1, term2, term3" string into normalized tokens."""
+
+    tokens: list[str] = []
+    for raw in re.split(r"[,;]+", value):
+        token = _ascii_fold(raw).strip()
+        # Strip enclosing quotes/backticks/brackets and surrounding markers
+        token = re.sub(r"^[\-\*`'\"<\[]+|[`'\">\]]+$", "", token).strip()
+        if not token or len(token) < 2:
+            continue
+        tokens.append(token)
+    return tokens
+
+
+def extract_niche_vocab_overrides(project: BookProject) -> dict[NicheKey, tuple[str, ...]]:
+    """Return author-supplied vocabulary additions per niche.
+
+    Reads every ``.md`` / ``.txt`` file in
+    ``project.metadata_files + project.notes_files`` and scrapes a
+    ``## Nischen-Begriffe`` (or ``## Niche-Terms``) section. Two
+    formats are accepted inside the section:
+
+    1. **Inline** — ``KI: agentic, llm, ragstack`` (one niche per line)
+    2. **Subblock** — ``### KI`` followed by ``- agentic`` / ``- llm``
+
+    Niche names are matched via :data:`_NICHE_KEY_ALIASES` so authors
+    can write either the technical key (``ki_und_ai``) or the display
+    label (``KI``, ``Finanzen / CFO``). Tokens are ascii-folded so the
+    detection sees them with the same shape as :data:`NICHE_TERMS`.
+
+    Returns an empty dict when no override section exists — overrides
+    only matter when the heuristic's vocabulary misses a domain-specific
+    term and the author wants the detector to catch it.
+    """
+
+    sources: list[Any] = list(getattr(project, "metadata_files", []) or [])
+    sources.extend(getattr(project, "notes_files", []) or [])
+    additions: dict[NicheKey, list[str]] = {}
+
+    for path in sources:
+        try:
+            if not path.exists() or path.suffix.lower() not in {".md", ".txt"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = text.splitlines()
+        idx = 0
+        while idx < len(lines):
+            line = lines[idx].rstrip()
+            if _NICHE_VOCAB_HEADER_RE.match(line):
+                idx += 1
+                current_key: NicheKey | None = None
+                while idx < len(lines):
+                    body = lines[idx].rstrip()
+                    if _NEXT_SECTION_RE_NICHE.match(body) and not _NICHE_VOCAB_HEADER_RE.match(body):
+                        break
+                    sub_match = _NICHE_VOCAB_SUBHEADER_RE.match(body)
+                    if sub_match:
+                        current_key = _normalize_niche_key_alias(sub_match.group(1))
+                        idx += 1
+                        continue
+                    inline_match = _NICHE_VOCAB_INLINE_RE.match(body)
+                    if inline_match:
+                        # "key: token, token" — preferred form, sets the
+                        # current bucket explicitly and adds the tokens.
+                        key = _normalize_niche_key_alias(inline_match.group(1))
+                        if key:
+                            tokens = _split_vocab_value(inline_match.group(2))
+                            if tokens:
+                                additions.setdefault(key, []).extend(tokens)
+                            idx += 1
+                            continue
+                    # Bare list line under a subheader — collect into the
+                    # currently-active niche bucket.
+                    if current_key and body.strip():
+                        bare = re.sub(r"^[\-\*\s>•]+", "", body).strip()
+                        if bare:
+                            tokens = _split_vocab_value(bare)
+                            if tokens:
+                                additions.setdefault(current_key, []).extend(tokens)
+                    idx += 1
+                continue
+            idx += 1
+
+    # Dedup per niche while preserving first-occurrence order.
+    result: dict[NicheKey, tuple[str, ...]] = {}
+    for key, tokens in additions.items():
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for tok in tokens:
+            if tok in seen:
+                continue
+            seen.add(tok)
+            ordered.append(tok)
+        if ordered:
+            result[key] = tuple(ordered)
+    return result
+
+
 def detect_niche(project: BookProject) -> tuple[NicheKey, int]:
     """Return (niche_key, confidence_0_100).
 
     Confidence is the share of hits attributed to the winning niche.
     Falls back to ``allgemeines_sachbuch`` with zero confidence when no
     niche terms hit at all.
+
+    Honors author-declared vocabulary additions via
+    :func:`extract_niche_vocab_overrides` — terms in a project's
+    ``## Nischen-Begriffe`` section are scored alongside the built-in
+    :data:`NICHE_TERMS` so domain-specific acronyms (e.g. "ebit",
+    "ragstack", "icp") tilt the detection toward the right niche.
     """
 
     haystack = _ascii_fold(_joined_metadata(project))
     if not haystack.strip():
         return "allgemeines_sachbuch", 0
 
+    overrides = extract_niche_vocab_overrides(project)
+
     counts: dict[NicheKey, int] = {}
     for niche_key, terms in NICHE_TERMS.items():
+        extra_terms = overrides.get(niche_key, ())
         count = sum(1 for term in terms if term in haystack)
+        count += sum(1 for term in extra_terms if term in haystack)
         if count > 0:
             counts[niche_key] = count
 

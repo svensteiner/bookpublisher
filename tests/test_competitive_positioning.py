@@ -11,6 +11,7 @@ from modules.competitive_positioning import (
     PositioningReport,
     build_positioning_report,
     detect_niche,
+    extract_niche_vocab_overrides,
     render_positioning_markdown,
 )
 from modules.discovery import BookProject
@@ -200,3 +201,170 @@ def test_finance_niche_is_detected():
 
     assert report.niche_key == "finanzen_und_cfo"
     assert report.niche_label == NICHE_LABELS["finanzen_und_cfo"]
+
+
+# --- Niche-vocab overrides -----------------------------------------------
+
+
+def _project_with_meta(tmp_path: Path, body: str, *, title: str | None = "Mein Buch",
+                       subtitle: str | None = "", description: str | None = "") -> BookProject:
+    meta = tmp_path / "metadata.md"
+    meta.write_text(body, encoding="utf-8")
+    return BookProject(
+        project_id="overridebook",
+        root=tmp_path,
+        title=title,
+        subtitle=subtitle,
+        amazon_description=description,
+        metadata_files=[meta],
+        notes_files=[],
+    )
+
+
+def test_extract_niche_vocab_returns_empty_for_no_section(tmp_path: Path):
+    project = _project_with_meta(tmp_path, "# Buch\n\nNur Text.\n")
+
+    assert extract_niche_vocab_overrides(project) == {}
+
+
+def test_extract_niche_vocab_parses_inline_form(tmp_path: Path):
+    body = (
+        "## Nischen-Begriffe\n\n"
+        "KI: agentic, llm, ragstack\n"
+        "Finanzen: ebit, cogs, deferred revenue\n"
+    )
+    project = _project_with_meta(tmp_path, body)
+
+    overrides = extract_niche_vocab_overrides(project)
+
+    assert overrides["ki_und_ai"] == ("agentic", "llm", "ragstack")
+    assert "ebit" in overrides["finanzen_und_cfo"]
+    assert "cogs" in overrides["finanzen_und_cfo"]
+    assert "deferred revenue" in overrides["finanzen_und_cfo"]
+
+
+def test_extract_niche_vocab_parses_subblock_form(tmp_path: Path):
+    body = (
+        "## Niche-Terms\n\n"
+        "### KI\n"
+        "- agentic\n"
+        "- llm\n"
+        "### Finanzen\n"
+        "- ebit\n"
+        "- cogs\n"
+    )
+    project = _project_with_meta(tmp_path, body)
+
+    overrides = extract_niche_vocab_overrides(project)
+
+    assert overrides["ki_und_ai"] == ("agentic", "llm")
+    assert overrides["finanzen_und_cfo"] == ("ebit", "cogs")
+
+
+def test_extract_niche_vocab_accepts_technical_key(tmp_path: Path):
+    body = (
+        "## Nischen-Begriffe\n\n"
+        "ki_und_ai: agentic\n"
+    )
+    project = _project_with_meta(tmp_path, body)
+
+    assert "agentic" in extract_niche_vocab_overrides(project)["ki_und_ai"]
+
+
+def test_extract_niche_vocab_ascii_folds_tokens(tmp_path: Path):
+    body = (
+        "## Nischen-Begriffe\n\n"
+        "Führung: führungskräfte, agilität\n"
+    )
+    project = _project_with_meta(tmp_path, body)
+
+    overrides = extract_niche_vocab_overrides(project)
+
+    # Umlauts must be folded so the detector matches the haystack
+    assert "fuehrungskraefte" in overrides["fuehrung_team"]
+    assert "agilitaet" in overrides["fuehrung_team"]
+
+
+def test_extract_niche_vocab_ignores_unknown_niche_keys(tmp_path: Path):
+    body = (
+        "## Nischen-Begriffe\n\n"
+        "ZufallsNische: ignoriere mich\n"
+        "KI: agentic\n"
+    )
+    project = _project_with_meta(tmp_path, body)
+
+    overrides = extract_niche_vocab_overrides(project)
+
+    assert overrides == {"ki_und_ai": ("agentic",)}
+
+
+def test_extract_niche_vocab_dedupes_tokens(tmp_path: Path):
+    body = (
+        "## Nischen-Begriffe\n\n"
+        "KI: agentic, llm, agentic\n"
+        "### KI\n"
+        "- llm\n"
+        "- rag\n"
+    )
+    project = _project_with_meta(tmp_path, body)
+
+    overrides = extract_niche_vocab_overrides(project)
+    assert overrides["ki_und_ai"] == ("agentic", "llm", "rag")
+
+
+def test_extract_niche_vocab_skips_too_short_tokens(tmp_path: Path):
+    body = (
+        "## Nischen-Begriffe\n\n"
+        "KI: a, bc, valid term\n"
+    )
+    project = _project_with_meta(tmp_path, body)
+
+    overrides = extract_niche_vocab_overrides(project)
+    # 'a' is dropped (length < 2 after strip), 'bc' kept (len >= 2)
+    assert "a" not in overrides["ki_und_ai"]
+    assert "bc" in overrides["ki_und_ai"]
+    assert "valid term" in overrides["ki_und_ai"]
+
+
+def test_detect_niche_uses_override_terms(tmp_path: Path):
+    # A description that has zero built-in niche terms but contains
+    # a custom token "ragstack" the author declared for KI.
+    project = _project_with_meta(
+        tmp_path,
+        "## Nischen-Begriffe\n\nKI: ragstack, agenticflow\n",
+        title="Mein Sachbuch",
+        subtitle="Über die Welt",
+        description="Wir reden über ragstack und seine Auswirkungen.",
+    )
+
+    niche_key, confidence = detect_niche(project)
+
+    assert niche_key == "ki_und_ai"
+    assert confidence > 0
+
+
+def test_detect_niche_without_overrides_unchanged(tmp_path: Path):
+    """Adding the section but no usable terms must not change detection."""
+    project = _project_with_meta(
+        tmp_path,
+        "## Nischen-Begriffe\n\nUnbekannt: foo, bar\n",
+        title="Cashflow für Geschäftsführer",
+        subtitle="Liquidität steuern ohne Berater",
+        description="Praxis-Methode für CFO mit Bilanz-Checklisten.",
+    )
+
+    niche_key, _ = detect_niche(project)
+
+    assert niche_key == "finanzen_und_cfo"
+
+
+def test_extract_niche_vocab_handles_missing_files_gracefully(tmp_path: Path):
+    ghost = tmp_path / "ghost.md"
+    project = BookProject(
+        project_id="x",
+        root=tmp_path,
+        metadata_files=[ghost],
+        notes_files=[],
+    )
+
+    assert extract_niche_vocab_overrides(project) == {}
