@@ -21,6 +21,8 @@ from modules.industrial import build_industrial_qa, render_beginner_summary, ren
 from modules.kdp_keywords import (
     KDPKeyword,
     build_kdp_keywords,
+    extract_kdp_categories,
+    find_keyword_conflicts,
     render_kdp_keywords_report_markdown,
 )
 from modules.llm import LLMClient
@@ -911,14 +913,25 @@ class PublisherPipeline:
                 angle_count=len(positioning.unique_angles),
                 risk_count=len(positioning.collision_risks),
             )
+            kdp_categories = extract_kdp_categories(project)
+            kdp_conflicts = find_keyword_conflicts(kdp_keywords, kdp_categories)
             self.writer.write_text(
                 "kdp_keywords.md",
-                render_kdp_keywords_report_markdown(project, kdp_keywords),
+                render_kdp_keywords_report_markdown(
+                    project,
+                    kdp_keywords,
+                    categories=kdp_categories,
+                    conflicts=kdp_conflicts,
+                ),
                 project.project_id,
             )
             self.writer.write_json(
                 "kdp_keywords.json",
-                {"keywords": [kw.to_json() for kw in kdp_keywords]},
+                {
+                    "keywords": [kw.to_json() for kw in kdp_keywords],
+                    "categories": list(kdp_categories),
+                    "conflicts": [conflict.to_json() for conflict in kdp_conflicts],
+                },
                 project.project_id,
             )
             if sample_scan is not None and sample_json is not None:

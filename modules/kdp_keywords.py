@@ -79,6 +79,34 @@ FORBIDDEN_TOKENS: frozenset[str] = frozenset(
     }
 )
 
+# Tokens too generic to count as a "real" category overlap. A keyword
+# sharing only the word "buch" with the chosen category is not actually
+# a conflict — Amazon's overlap rule applies to substantive subject
+# tokens.
+KEYWORD_CONFLICT_STOP_TOKENS: frozenset[str] = frozenset(
+    {
+        "buch", "ratgeber", "praxis", "anleitung", "schritt",
+        "ohne", "fuer", "und", "der", "die", "das", "den", "des",
+        "mit", "ein", "eine", "einer", "von", "ueber", "im", "auf",
+        "leitfaden", "handbuch", "guide", "sachbuch",
+    }
+)
+
+# Minimum number of substantive overlap tokens to call a keyword a
+# conflict with a category. One real subject token (e.g. "finanzen") is
+# enough — that's the slot Amazon will likely de-prioritize.
+KEYWORD_CONFLICT_MIN_SHARED: int = 1
+
+# Section headers in notes/metadata that declare the author's chosen KDP
+# categories. Case-insensitive match. ``Kategorien`` covers both
+# singular and plural forms via ``Kategorie(n)``.
+_CATEGORY_HEADER_RE = re.compile(
+    r"^##\s*(?:kdp[\s-]+)?(?:kategorie[n]?|categor(?:y|ies))\b.*$",
+    flags=re.I,
+)
+_NEXT_SECTION_RE = re.compile(r"^##\s+", flags=re.I)
+_LIST_PREFIX_RE = re.compile(r"^[\-\*•‣●\d\.\)\>\s]+")
+
 
 @dataclass(frozen=True)
 class KDPKeyword:
@@ -96,6 +124,126 @@ class KDPKeyword:
             "source": self.source,
             "rationale": self.rationale,
         }
+
+
+@dataclass(frozen=True)
+class KeywordConflict:
+    """A keyword slot that overlaps with a declared KDP category.
+
+    Amazon's targeting rule says a category-token already in your
+    chosen KDP category gets reduced weight when repeated in a keyword
+    slot. The conflict report surfaces these so the author can replace
+    the slot with a long-tail phrase instead.
+    """
+
+    keyword_text: str
+    category: str
+    shared_tokens: tuple[str, ...]
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "keyword_text": self.keyword_text,
+            "category": self.category,
+            "shared_tokens": list(self.shared_tokens),
+        }
+
+
+def extract_kdp_categories(project: BookProject) -> list[str]:
+    """Return author-declared KDP categories from project metadata.
+
+    Reads every ``.md`` / ``.txt`` file in ``project.metadata_files +
+    project.notes_files`` and scrapes any section whose header matches
+    ``## Kategorie``, ``## Kategorien``, ``## KDP Kategorie``,
+    ``## Category``, ``## Categories`` (case-insensitive). Returns one
+    string per non-empty body line, with list markers (``-``, ``*``,
+    ``1.``, ``>``) stripped.
+
+    Empty result is normal — most books carry KDP categories in the
+    KDP backend only and not in metadata. Callers should treat the
+    empty list as "no conflict check possible" rather than "no
+    conflicts found".
+    """
+
+    out: list[str] = []
+    seen: set[str] = set()
+    sources: list[Any] = list(getattr(project, "metadata_files", []) or [])
+    sources.extend(getattr(project, "notes_files", []) or [])
+
+    for path in sources:
+        try:
+            if not path.exists() or path.suffix.lower() not in {".md", ".txt"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = text.splitlines()
+        idx = 0
+        while idx < len(lines):
+            line = lines[idx].rstrip()
+            if _CATEGORY_HEADER_RE.match(line):
+                idx += 1
+                while idx < len(lines):
+                    body = lines[idx].rstrip()
+                    if _NEXT_SECTION_RE.match(body):
+                        break
+                    cleaned = _LIST_PREFIX_RE.sub("", body).strip()
+                    if cleaned and cleaned not in seen:
+                        seen.add(cleaned)
+                        out.append(cleaned)
+                    idx += 1
+                continue
+            idx += 1
+    return out
+
+
+def _keyword_token_set(text: str) -> set[str]:
+    """Return the substantive token set of an already-normalized keyword."""
+    return {tok for tok in text.split() if tok}
+
+
+def _category_token_set(category: str) -> set[str]:
+    """Return the substantive token set of a raw category string."""
+    normalized = _normalize_phrase(category)
+    return {tok for tok in normalized.split() if tok}
+
+
+def find_keyword_conflicts(
+    keywords: list[KDPKeyword],
+    categories: list[str],
+) -> list[KeywordConflict]:
+    """Return one :class:`KeywordConflict` per keyword that overlaps a category.
+
+    Overlap is counted only against *substantive* tokens — generic
+    nonfiction filler ("buch", "ratgeber", "fuer", …) lives in
+    :data:`KEYWORD_CONFLICT_STOP_TOKENS` and is excluded so the report
+    does not surface false-positive conflicts.
+
+    At most one conflict is reported per keyword (the first matching
+    category in declaration order). Returns an empty list when either
+    side is empty — callers should distinguish "no conflicts" from
+    "no categories declared" via the input list.
+    """
+
+    if not keywords or not categories:
+        return []
+    out: list[KeywordConflict] = []
+    for keyword in keywords:
+        kw_tokens = _keyword_token_set(keyword.text)
+        if not kw_tokens:
+            continue
+        for category in categories:
+            cat_tokens = _category_token_set(category)
+            shared = (kw_tokens & cat_tokens) - KEYWORD_CONFLICT_STOP_TOKENS
+            if len(shared) >= KEYWORD_CONFLICT_MIN_SHARED:
+                out.append(
+                    KeywordConflict(
+                        keyword_text=keyword.text,
+                        category=category,
+                        shared_tokens=tuple(sorted(shared)),
+                    )
+                )
+                break
+    return out
 
 
 def _normalize_phrase(value: str) -> str:
@@ -257,10 +405,82 @@ def build_kdp_keywords(project: BookProject) -> list[KDPKeyword]:
     return keywords
 
 
+def _render_conflict_section(
+    categories: list[str],
+    conflicts: list[KeywordConflict],
+) -> list[str]:
+    """Return Markdown lines for the conflict-check section."""
+
+    lines: list[str] = ["## Konflikt-Check (Kategorie vs. Keyword)", ""]
+    if not categories:
+        lines.extend([
+            "Keine KDP-Kategorien in deinen Metadaten gefunden — Konflikt-Check übersprungen.",
+            "",
+            "Trage in `metadata.md` deine zwei KDP-Kategorien ein, zum Beispiel:",
+            "",
+            "```",
+            "## KDP Kategorien",
+            "- Sachbuch / Wirtschaft / Unternehmensführung",
+            "- Sachbuch / Ratgeber / Beruf & Karriere",
+            "```",
+            "",
+            "Sobald die Kategorien dokumentiert sind, prüft dieser Block automatisch, "
+            "ob ein Keyword-Slot mit deiner Kategorie überlappt und damit von Amazon "
+            "ignoriert würde.",
+            "",
+        ])
+        return lines
+
+    lines.append("Erkannte KDP-Kategorien:")
+    for category in categories:
+        lines.append(f"- {category}")
+    lines.append("")
+
+    if not conflicts:
+        lines.extend([
+            "🟢 **Kein Konflikt.** Keiner der 7 Keyword-Slots überlappt mit deinen "
+            "Kategorien — Amazon zählt alle Slots als zusätzliche Targeting-Signale.",
+            "",
+        ])
+        return lines
+
+    lines.extend([
+        f"🔴 **{len(conflicts)} Konflikt(e) gefunden.** Diese Slots wiederholen Tokens, "
+        "die bereits in deiner Kategorie stehen — Amazon entwertet solche Slots, "
+        "weil die Kategorie schon das Targeting macht.",
+        "",
+        "| Keyword | Kategorie | Überlappende Begriffe |",
+        "|---|---|---|",
+    ])
+    for conflict in conflicts:
+        shared = ", ".join(conflict.shared_tokens) or "-"
+        lines.append(
+            f"| `{conflict.keyword_text}` | {conflict.category} | {shared} |"
+        )
+    lines.extend([
+        "",
+        "Empfehlung: Tausche jedes Konflikt-Keyword gegen eine Long-Tail-Phrase aus, "
+        "die mindestens zwei *zusätzliche* Begriffe trägt (z.B. eine konkrete "
+        "Anwendung oder eine Zielgruppe), die nicht schon in der Kategorie stehen.",
+        "",
+    ])
+    return lines
+
+
 def render_kdp_keywords_report_markdown(
-    project: BookProject, keywords: list[KDPKeyword]
+    project: BookProject,
+    keywords: list[KDPKeyword],
+    categories: list[str] | None = None,
+    conflicts: list[KeywordConflict] | None = None,
 ) -> str:
-    """Beginner-friendly walk-through with the 7 ready-to-paste strings."""
+    """Beginner-friendly walk-through with the 7 ready-to-paste strings.
+
+    When ``categories`` is provided (or read from project metadata by
+    the caller), an additional ``## Konflikt-Check`` section is rendered
+    showing which slots overlap with the chosen KDP category. If
+    ``conflicts`` is ``None``, it is recomputed from the keyword list
+    and categories so callers can pass just the categories.
+    """
 
     title = project.title or project.project_id
     lines: list[str] = [
@@ -300,6 +520,13 @@ def render_kdp_keywords_report_markdown(
                 "fehlenden Slots zu fuellen._",
                 "",
             ])
+    categories_list = list(categories) if categories is not None else extract_kdp_categories(project)
+    if conflicts is None:
+        conflicts_list = find_keyword_conflicts(keywords, categories_list)
+    else:
+        conflicts_list = list(conflicts)
+    lines.extend(_render_conflict_section(categories_list, conflicts_list))
+
     lines.extend([
         "## Spielregeln, die hier eingehalten werden",
         "",
