@@ -20,6 +20,7 @@ from modules.pipeline import (
     _top_arc_payload,
     _top_chapter_balance_payload,
     _top_kdp_keywords_payload,
+    _top_collision_risk_payload,
     _top_persona_payload,
     _top_positioning_payload,
     _top_rewrite_payload,
@@ -765,6 +766,104 @@ def test_top_positioning_payload_is_immutable_against_caller_mutation():
     # source angle is frozen and still carries the original claim
     assert report.unique_angles[0].claim != "mutated"
     assert report.positioning_pitch != "mutated"
+
+
+# ─── _top_collision_risk_payload ───────────────────────────────────────
+
+
+def test_top_collision_risk_payload_returns_none_when_report_missing():
+    assert _top_collision_risk_payload(None) is None
+
+
+def test_top_collision_risk_payload_returns_none_when_no_risks():
+    report = _positioning()
+    assert report.collision_risks == []
+    assert _top_collision_risk_payload(report) is None
+
+
+def test_top_collision_risk_payload_skips_whitespace_entries():
+    """A whitespace-only first risk must not block real entries below it."""
+    report = PositioningReport(
+        niche_key="finanzen_und_cfo",
+        niche_label="Finanzen / CFO / Controlling",
+        niche_confidence=80,
+        audience="CFOs",
+        subject="Playbook",
+        archetypes=[],
+        unique_angles=[],
+        collision_risks=["   ", "", "Echtes Kollisions-Risiko."],
+        positioning_pitch="",
+        anchors=[],
+    )
+    payload = _top_collision_risk_payload(report)
+    assert payload is not None
+    assert payload["risk"] == "Echtes Kollisions-Risiko."
+
+
+def test_top_collision_risk_payload_picks_first_risk_as_top():
+    """``collision_risks`` is already ordered by severity — first wins."""
+    report = PositioningReport(
+        niche_key="ki_und_ai",
+        niche_label="KI / Künstliche Intelligenz",
+        niche_confidence=70,
+        audience="Operatoren",
+        subject="KI-Playbook",
+        archetypes=[],
+        unique_angles=[],
+        collision_risks=[
+            "Ohne sichtbare Zahlen kaum von Motivationsliteratur abgrenzbar.",
+            "Stimme in den Metadaten nicht erkennbar.",
+            "KI-Nische ist mit Hype-Büchern überflutet.",
+        ],
+        positioning_pitch="",
+        anchors=[],
+    )
+    payload = _top_collision_risk_payload(report)
+    assert payload is not None
+    assert payload["risk"].startswith("Ohne sichtbare Zahlen")
+    assert payload["niche_label"] == "KI / Künstliche Intelligenz"
+    assert payload["niche_confidence"] == 70
+    assert payload["total_risks"] == 3
+
+
+def test_top_collision_risk_payload_total_risks_reflects_full_list():
+    report = PositioningReport(
+        niche_key="finanzen_und_cfo",
+        niche_label="Finanzen / CFO / Controlling",
+        niche_confidence=80,
+        audience="CFOs",
+        subject="Playbook",
+        archetypes=[],
+        unique_angles=[],
+        collision_risks=["Risiko 1", "Risiko 2"],
+        positioning_pitch="",
+        anchors=[],
+    )
+    payload = _top_collision_risk_payload(report)
+    assert payload is not None
+    assert payload["total_risks"] == 2
+
+
+def test_top_collision_risk_payload_is_immutable_against_caller_mutation():
+    """Mutating the returned dict must not affect the source report."""
+    report = PositioningReport(
+        niche_key="ki_und_ai",
+        niche_label="KI / Künstliche Intelligenz",
+        niche_confidence=70,
+        audience="Operatoren",
+        subject="x",
+        archetypes=[],
+        unique_angles=[],
+        collision_risks=["Risiko A", "Risiko B"],
+        positioning_pitch="",
+        anchors=[],
+    )
+    payload = _top_collision_risk_payload(report)
+    assert payload is not None
+    payload["risk"] = "mutated"
+    payload["niche_label"] = "mutated"
+    assert report.collision_risks[0] == "Risiko A"
+    assert report.niche_label == "KI / Künstliche Intelligenz"
 
 
 # ─── _top_persona_payload ───────────────────────────────────────────────

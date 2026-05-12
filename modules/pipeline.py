@@ -346,6 +346,45 @@ def _top_persona_payload(
     }
 
 
+def _top_collision_risk_payload(
+    positioning: PositioningReport | None,
+) -> dict | None:
+    """Surface the single highest-priority positioning collision risk.
+
+    ``PositioningReport.collision_risks`` is already ordered by severity:
+    missing-numbers signal first, voice second, audience third, method
+    fourth, hype-title fifth and niche-specific reinforcements last. The
+    first non-empty entry is therefore the most impactful warning the
+    author should see — anything beyond a single risk would dilute the
+    signal in beginner_summary. Niche-specific risks (e.g. KI-Nische
+    without numbers) are surfaced via the ``niche_label`` field so the
+    author sees the framing without re-reading the full report.
+
+    Returns ``None`` when there is no positioning report, no collision
+    risk recorded, or the top risk text is whitespace-only — keeping the
+    summary clean when the metadata gives no positioning collision
+    signal at all.
+
+    The returned dict is immutable: it copies values out so a caller
+    mutating the result cannot affect the source report.
+    """
+
+    if positioning is None:
+        return None
+    risks = list(positioning.collision_risks or [])
+    for risk in risks:
+        text = str(risk or "").strip()
+        if not text:
+            continue
+        return {
+            "risk": text,
+            "niche_label": positioning.niche_label,
+            "niche_confidence": int(positioning.niche_confidence),
+            "total_risks": len(risks),
+        }
+    return None
+
+
 def _top_positioning_payload(
     positioning: PositioningReport | None,
 ) -> dict | None:
@@ -687,6 +726,7 @@ class PublisherPipeline:
             top_kdp_keywords = _top_kdp_keywords_payload(kdp_keywords)
             positioning = build_positioning_report(project)
             top_positioning = _top_positioning_payload(positioning)
+            top_collision_risk = _top_collision_risk_payload(positioning)
             persona_report = build_persona_report(project, chapter_titles=chapter_titles)
             top_persona = _top_persona_payload(persona_report)
             arc_md: str | None = None
@@ -712,6 +752,7 @@ class PublisherPipeline:
                     score_history_highlight=score_history_highlight,
                     top_kdp_keywords=top_kdp_keywords,
                     top_positioning=top_positioning,
+                    top_collision_risk=top_collision_risk,
                     top_persona=top_persona,
                     top_arc=top_arc,
                     top_chapter_balance=top_chapter_balance,

@@ -1020,6 +1020,55 @@ def _render_top_positioning(
     return lines
 
 
+def _render_top_collision_risk(
+    top_collision_risk: dict[str, Any] | None,
+) -> list[str]:
+    """Render the top positioning collision-risk warning block.
+
+    Surfaces the single highest-priority collision risk from
+    ``competitive_positioning.json`` directly in beginner_summary so the
+    author sees what would make the book hard to distinguish from
+    generic competitors — placed right under the positioning pitch so
+    the warning lands next to the claim the author would otherwise
+    paste into the Amazon description.
+
+    The dict is expected to carry ``risk``, ``niche_label``,
+    ``niche_confidence`` and ``total_risks``. Returns an empty list when
+    no payload is provided or the risk text is whitespace-only — keeping
+    the summary clean when the metadata gives no collision signal.
+    """
+
+    if not top_collision_risk:
+        return []
+    risk = str(top_collision_risk.get("risk") or "").strip()
+    if not risk:
+        return []
+    niche_label = str(top_collision_risk.get("niche_label") or "").strip()
+    total_risks = int(top_collision_risk.get("total_risks") or 0)
+    lines: list[str] = [
+        "## ⚠️ Kollisions-Risiko",
+        "",
+        (
+            "Das größte Risiko, dass dein Buch in der Nische untergeht — "
+            "fixe das, bevor du den Pitch oben ins KDP-Backend kopierst."
+        ),
+        "",
+        f"- {SCORE_BADGE_FIX} {risk}",
+    ]
+    if niche_label:
+        lines.append(f"- **Nische:** {niche_label}")
+    if total_risks > 1:
+        remaining = total_risks - 1
+        plural = "weitere Risiken" if remaining != 1 else "weiteres Risiko"
+        lines.append(f"- Außerdem {remaining} {plural} im vollen Report.")
+    lines.extend([
+        "",
+        "Alle Kollisions-Risiken siehe `competitive_positioning.md`.",
+        "",
+    ])
+    return lines
+
+
 def render_beginner_summary(
     project: BookProject,
     report: dict[str, Any],
@@ -1030,6 +1079,7 @@ def render_beginner_summary(
     score_history_highlight: dict[str, Any] | None = None,
     top_kdp_keywords: list[dict[str, Any]] | None = None,
     top_positioning: dict[str, Any] | None = None,
+    top_collision_risk: dict[str, Any] | None = None,
     top_persona: dict[str, Any] | None = None,
     top_arc: dict[str, Any] | None = None,
     top_chapter_balance: dict[str, Any] | None = None,
@@ -1095,6 +1145,7 @@ def render_beginner_summary(
     lines.extend(_render_top_arc(top_arc))
     lines.extend(_render_top_persona(top_persona))
     lines.extend(_render_top_positioning(top_positioning))
+    lines.extend(_render_top_collision_risk(top_collision_risk))
     lines.extend(_render_top_rewrite(top_rewrite))
     lines.extend(_render_top_kdp_keywords(top_kdp_keywords))
 

@@ -978,6 +978,143 @@ def test_render_beginner_summary_top_positioning_low_strength_uses_review_badge(
     assert SCORE_BADGE_REVIEW in section
 
 
+# ─── render_beginner_summary: top_collision_risk ─────────────────────
+
+
+def test_render_beginner_summary_top_collision_risk_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_collision_risk = {
+        "risk": "Ohne sichtbare Zahlen kaum von Motivationsliteratur abgrenzbar.",
+        "niche_label": "KI / Künstliche Intelligenz",
+        "niche_confidence": 75,
+        "total_risks": 3,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_collision_risk=top_collision_risk,
+    )
+    assert "## ⚠️ Kollisions-Risiko" in summary
+    assert "Ohne sichtbare Zahlen" in summary
+    assert "**Nische:** KI / Künstliche Intelligenz" in summary
+    # total_risks=3 → 2 further risks announced
+    assert "Außerdem 2 weitere Risiken" in summary
+    assert "`competitive_positioning.md`" in summary
+    section_start = summary.index("## ⚠️ Kollisions-Risiko")
+    section_end = summary.index("`competitive_positioning.md`", section_start)
+    section = summary[section_start:section_end]
+    assert SCORE_BADGE_FIX in section
+
+
+def test_render_beginner_summary_top_collision_risk_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_collision_risk=None
+    )
+    assert "## ⚠️ Kollisions-Risiko" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_collision_risk={}
+    )
+    assert "## ⚠️ Kollisions-Risiko" not in summary_empty
+
+
+def test_render_beginner_summary_top_collision_risk_section_absent_when_blank_text():
+    """A whitespace-only risk payload must not render an empty warning."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_collision_risk = {
+        "risk": "   ",
+        "niche_label": "Finanzen",
+        "niche_confidence": 80,
+        "total_risks": 1,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_collision_risk=top_collision_risk,
+    )
+    assert "## ⚠️ Kollisions-Risiko" not in summary
+
+
+def test_render_beginner_summary_top_collision_risk_singular_remaining_risk():
+    """total_risks=2 must announce '1 weiteres Risiko' (singular)."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_collision_risk = {
+        "risk": "Top-Risiko-Text.",
+        "niche_label": "Vertrieb",
+        "niche_confidence": 60,
+        "total_risks": 2,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_collision_risk=top_collision_risk,
+    )
+    assert "Außerdem 1 weiteres Risiko" in summary
+
+
+def test_render_beginner_summary_top_collision_risk_omits_remainder_when_total_is_one():
+    """A single recorded risk must not announce 'außerdem 0 weitere'."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_collision_risk = {
+        "risk": "Einziges Risiko.",
+        "niche_label": "Mindset",
+        "niche_confidence": 50,
+        "total_risks": 1,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_collision_risk=top_collision_risk,
+    )
+    assert "## ⚠️ Kollisions-Risiko" in summary
+    assert "Außerdem" not in summary[summary.index("## ⚠️ Kollisions-Risiko"):]
+
+
+def test_render_beginner_summary_top_collision_risk_handles_partial_payload():
+    """Missing niche/total fields must not crash and must skip those lines."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_collision_risk = {"risk": "Nur das Risiko ist da."}
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_collision_risk=top_collision_risk,
+    )
+    section_start = summary.index("## ⚠️ Kollisions-Risiko")
+    section_end = summary.index("`competitive_positioning.md`", section_start)
+    section = summary[section_start:section_end]
+    assert "Nur das Risiko ist da." in section
+    assert "**Nische:**" not in section
+    assert "Außerdem" not in section
+
+
+def test_render_beginner_summary_top_collision_risk_renders_after_positioning():
+    """Per backlog: the risk must land directly below the positioning pitch."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_positioning = {
+        "angle_claim": "Operator-Stimme.",
+        "angle_strength": 80,
+        "pitch": "Pitch-Satz.",
+        "niche_label": "Vertrieb",
+        "niche_confidence": 80,
+        "audience": "Vertriebsleiter",
+    }
+    top_collision_risk = {
+        "risk": "Test-Risiko.",
+        "niche_label": "Vertrieb",
+        "niche_confidence": 80,
+        "total_risks": 1,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_positioning=top_positioning,
+        top_collision_risk=top_collision_risk,
+    )
+    pos_idx = summary.index("## Positionierung")
+    risk_idx = summary.index("## ⚠️ Kollisions-Risiko")
+    assert pos_idx < risk_idx
+
+
 # ─── render_beginner_summary: top_arc ──────────────────────────────────
 
 
