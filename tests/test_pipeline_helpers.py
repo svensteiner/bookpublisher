@@ -18,6 +18,7 @@ from modules.pipeline import (
     _round_delta_payload,
     _score_history_payload,
     _top_arc_payload,
+    _top_chapter_balance_payload,
     _top_kdp_keywords_payload,
     _top_persona_payload,
     _top_positioning_payload,
@@ -948,3 +949,182 @@ def test_top_arc_payload_is_immutable_against_caller_mutation():
     assert fresh is not None
     assert fresh["top_fix"] == "First"
     assert fresh["inversion_count"] == 1
+
+
+# ─── _top_chapter_balance_payload ──────────────────────────────────────
+
+
+def _outlier(
+    *,
+    kind: str,
+    index: int,
+    word_count: int,
+    median: int,
+    title: str = "Ein Kapitel",
+    fix: str = "Default fix",
+    ratio: float | None = None,
+) -> dict:
+    return {
+        "kind": kind,
+        "index": index,
+        "title": title,
+        "word_count": word_count,
+        "median": median,
+        "ratio": ratio if ratio is not None else round(word_count / median, 1),
+        "fix": fix,
+    }
+
+
+def _chapter_json_with_balance(
+    *,
+    oversized: list[dict] | None = None,
+    undersized: list[dict] | None = None,
+    median: int = 1000,
+) -> dict:
+    return {
+        "chapters": [],
+        "average_score": 0,
+        "weakest_chapter_index": None,
+        "fixes": [],
+        "balance": {
+            "median_word_count": median,
+            "oversized": list(oversized or []),
+            "undersized": list(undersized or []),
+        },
+    }
+
+
+def test_top_chapter_balance_payload_returns_none_when_no_report():
+    assert _top_chapter_balance_payload(None) is None
+    assert _top_chapter_balance_payload({}) is None
+
+
+def test_top_chapter_balance_payload_returns_none_when_no_balance_key():
+    assert _top_chapter_balance_payload({"chapters": []}) is None
+
+
+def test_top_chapter_balance_payload_returns_none_when_both_lists_empty():
+    payload = _top_chapter_balance_payload(_chapter_json_with_balance())
+    assert payload is None
+
+
+def test_top_chapter_balance_payload_picks_top_oversized_when_only_oversized():
+    chapter_json = _chapter_json_with_balance(
+        oversized=[
+            _outlier(
+                kind="oversized",
+                index=4,
+                word_count=5200,
+                median=1000,
+                title="Die Methode",
+                fix="Kapitel 4 splitten.",
+            ),
+        ],
+    )
+    payload = _top_chapter_balance_payload(chapter_json)
+    assert payload is not None
+    assert payload["kind"] == "oversized"
+    assert payload["index"] == 4
+    assert payload["title"] == "Die Methode"
+    assert payload["word_count"] == 5200
+    assert payload["median"] == 1000
+    assert payload["ratio"] == 5.2
+    assert payload["fix"] == "Kapitel 4 splitten."
+
+
+def test_top_chapter_balance_payload_picks_top_undersized_when_only_undersized():
+    chapter_json = _chapter_json_with_balance(
+        undersized=[
+            _outlier(
+                kind="undersized",
+                index=2,
+                word_count=120,
+                median=1000,
+                fix="Kapitel 2 mergen.",
+            ),
+        ],
+    )
+    payload = _top_chapter_balance_payload(chapter_json)
+    assert payload is not None
+    assert payload["kind"] == "undersized"
+    assert payload["index"] == 2
+    assert payload["ratio"] == 0.1
+
+
+def test_top_chapter_balance_payload_picks_larger_deviation_when_both_present():
+    """Oversized 4.5× (dev 3.5) beats undersized 0.2× (dev 0.8) on deviation."""
+    chapter_json = _chapter_json_with_balance(
+        oversized=[_outlier(kind="oversized", index=3, word_count=4500, median=1000)],
+        undersized=[_outlier(kind="undersized", index=5, word_count=200, median=1000)],
+    )
+    payload = _top_chapter_balance_payload(chapter_json)
+    assert payload is not None
+    assert payload["kind"] == "oversized"
+    assert payload["index"] == 3
+
+
+def test_top_chapter_balance_payload_prefers_oversized_on_deviation_tie():
+    """When both sides deviate equally from 1.0, oversized wins the tie-break."""
+    chapter_json = _chapter_json_with_balance(
+        oversized=[
+            _outlier(
+                kind="oversized",
+                index=2,
+                word_count=2000,
+                median=1000,
+                ratio=2.0,
+            ),
+        ],
+        undersized=[
+            _outlier(
+                kind="undersized",
+                index=7,
+                word_count=0,
+                median=1000,
+                ratio=0.0,
+            ),
+        ],
+    )
+    payload = _top_chapter_balance_payload(chapter_json)
+    assert payload is not None
+    assert payload["kind"] == "oversized"
+    assert payload["index"] == 2
+
+
+def test_top_chapter_balance_payload_returns_none_when_fix_blank():
+    """A whitespace-only fix must not produce a noisy beginner_summary block."""
+    chapter_json = _chapter_json_with_balance(
+        oversized=[
+            _outlier(
+                kind="oversized",
+                index=1,
+                word_count=4000,
+                median=1000,
+                fix="   ",
+            ),
+        ],
+    )
+    payload = _top_chapter_balance_payload(chapter_json)
+    assert payload is None
+
+
+def test_top_chapter_balance_payload_is_immutable_against_caller_mutation():
+    chapter_json = _chapter_json_with_balance(
+        oversized=[
+            _outlier(
+                kind="oversized",
+                index=4,
+                word_count=5000,
+                median=1000,
+                fix="Original fix",
+            ),
+        ],
+    )
+    payload = _top_chapter_balance_payload(chapter_json)
+    assert payload is not None
+    payload["fix"] = "TAMPERED"
+    payload["index"] = 999
+    fresh = _top_chapter_balance_payload(chapter_json)
+    assert fresh is not None
+    assert fresh["fix"] == "Original fix"
+    assert fresh["index"] == 4

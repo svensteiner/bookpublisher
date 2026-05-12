@@ -392,6 +392,59 @@ def _top_positioning_payload(
     }
 
 
+def _top_chapter_balance_payload(chapter_json: dict | None) -> dict | None:
+    """Extract the single most extreme word-count outlier for beginner_summary.
+
+    Returns ``None`` when there is no balance data, when both outlier lists
+    are empty (chapter balance is healthy), or when the top entry carries
+    no usable fix line. When an outlier exists, returns an immutable dict
+    with ``kind`` (``"oversized"`` / ``"undersized"``), ``index``,
+    ``title``, ``word_count``, ``median``, ``ratio`` and ``fix``.
+
+    Selection rule: compare the most extreme oversized entry (first in the
+    pre-sorted oversized list, i.e. longest) against the most extreme
+    undersized entry (first in the pre-sorted undersized list, i.e.
+    shortest) by absolute deviation from the median ratio of 1.0. Whichever
+    sits further from 1.0 wins — that is the structurally most surprising
+    chapter. Tie-break: prefer ``oversized`` (a too-long chapter is the
+    more disruptive split-or-stay decision for the author).
+    """
+
+    if not chapter_json:
+        return None
+    balance = chapter_json.get("balance")
+    if not balance:
+        return None
+    oversized = balance.get("oversized") or []
+    undersized = balance.get("undersized") or []
+    candidates: list[tuple[float, int, dict]] = []
+    # tie_priority: 0 = oversized wins ties, 1 = undersized
+    if oversized:
+        top_over = oversized[0]
+        ratio_over = float(top_over.get("ratio") or 0.0)
+        candidates.append((abs(ratio_over - 1.0), 0, top_over))
+    if undersized:
+        top_under = undersized[0]
+        ratio_under = float(top_under.get("ratio") or 0.0)
+        candidates.append((abs(ratio_under - 1.0), 1, top_under))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    _, _, top = candidates[0]
+    fix = str(top.get("fix") or "").strip()
+    if not fix:
+        return None
+    return {
+        "kind": str(top.get("kind") or "").strip(),
+        "index": top.get("index"),
+        "title": str(top.get("title") or "").strip(),
+        "word_count": int(top.get("word_count") or 0),
+        "median": int(top.get("median") or 0),
+        "ratio": float(top.get("ratio") or 0.0),
+        "fix": fix,
+    }
+
+
 def _top_arc_payload(arc_json: dict | None) -> dict | None:
     """Extract the single biggest structural lever from a chapter_arc payload.
 
@@ -608,6 +661,7 @@ class PublisherPipeline:
                     reason=str(exc),
                 )
             weakest_chapters = _weakest_chapter_payload(chapter_json, limit=3)
+            top_chapter_balance = _top_chapter_balance_payload(chapter_json)
             sample_json: dict | None = None
             try:
                 sample_scan = build_sample_scan_report(project)
@@ -660,6 +714,7 @@ class PublisherPipeline:
                     top_positioning=top_positioning,
                     top_persona=top_persona,
                     top_arc=top_arc,
+                    top_chapter_balance=top_chapter_balance,
                 ),
                 project.project_id,
             )

@@ -1073,3 +1073,112 @@ def test_render_beginner_summary_top_arc_ready_badge_for_high_score():
     section = summary[section_start:section_end]
     assert SCORE_BADGE_READY in section
     assert "90/100" in section
+
+
+# ─── render_beginner_summary: top_chapter_balance ─────────────────────
+
+
+def test_render_beginner_summary_top_chapter_balance_oversized_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_balance = {
+        "kind": "oversized",
+        "index": 4,
+        "title": "Die Methode in der Praxis",
+        "word_count": 5200,
+        "median": 1000,
+        "ratio": 5.2,
+        "fix": "Kapitel 4 splitten — eigenes Kapitel fuer Fallstudie.",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_chapter_balance=top_balance,
+    )
+    assert "## Kapitel-Balance" in summary
+    assert "Split-Kandidat" in summary
+    assert "Kapitel 4 — Die Methode in der Praxis" in summary
+    assert "5200 Wörter" in summary
+    assert "Median 1000" in summary
+    assert "5.2×" in summary
+    assert "Kapitel 4 splitten" in summary
+    assert "`chapter_review.md`" in summary
+
+
+def test_render_beginner_summary_top_chapter_balance_undersized_uses_yellow_label():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_balance = {
+        "kind": "undersized",
+        "index": 8,
+        "title": "Anhang",
+        "word_count": 120,
+        "median": 1000,
+        "ratio": 0.1,
+        "fix": "Kapitel 8 mit Kapitel 7 zusammenlegen.",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_chapter_balance=top_balance,
+    )
+    section_start = summary.index("## Kapitel-Balance")
+    section_end = summary.index("`chapter_review.md`", section_start)
+    section = summary[section_start:section_end]
+    assert "Merge-Kandidat" in section
+    assert "0.1×" in section
+    assert SCORE_BADGE_REVIEW in section
+
+
+def test_render_beginner_summary_top_chapter_balance_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_chapter_balance=None
+    )
+    assert "## Kapitel-Balance" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_chapter_balance={}
+    )
+    assert "## Kapitel-Balance" not in summary_empty
+
+
+def test_render_beginner_summary_top_chapter_balance_absent_when_fix_blank():
+    """A whitespace fix must not produce an empty quote block."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_balance = {
+        "kind": "oversized",
+        "index": 1,
+        "title": "X",
+        "word_count": 9000,
+        "median": 1000,
+        "ratio": 9.0,
+        "fix": "   ",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_chapter_balance=top_balance,
+    )
+    assert "## Kapitel-Balance" not in summary
+
+
+def test_render_beginner_summary_top_chapter_balance_handles_partial_payload():
+    """Missing title falls back to a Kapitel-N placeholder."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_balance = {
+        "kind": "oversized",
+        "index": 6,
+        "word_count": 4000,
+        "median": 1000,
+        "ratio": 4.0,
+        "fix": "Splitten.",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_chapter_balance=top_balance,
+    )
+    section_start = summary.index("## Kapitel-Balance")
+    section_end = summary.index("`chapter_review.md`", section_start)
+    section = summary[section_start:section_end]
+    assert "Kapitel 6 — Kapitel 6" in section
+    assert "4×" in section
+    assert "Splitten." in section

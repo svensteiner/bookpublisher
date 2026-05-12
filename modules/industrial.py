@@ -514,6 +514,62 @@ REWRITE_FIELD_LABELS: dict[str, str] = {
 }
 
 
+def _render_top_chapter_balance(
+    top_balance: dict[str, Any] | None,
+) -> list[str]:
+    """Render the 'Kapitel-Balance' block from the most extreme outlier.
+
+    Surfaces the single most surprising word-count outlier — either the
+    longest chapter (split candidate) or the shortest (merge candidate).
+    Skips the section entirely when no outlier exists or the payload
+    carries no actionable fix; a balanced book should not be nagged with
+    cosmetic structural notes.
+
+    The dict is expected to carry ``kind`` (``"oversized"`` or
+    ``"undersized"``), ``index``, ``title``, ``word_count``, ``median``,
+    ``ratio`` and ``fix``.
+    """
+
+    if not top_balance:
+        return []
+    fix = str(top_balance.get("fix") or "").strip()
+    if not fix:
+        return []
+    kind = str(top_balance.get("kind") or "").strip()
+    index = top_balance.get("index", "?")
+    title = str(top_balance.get("title") or "").strip() or f"Kapitel {index}"
+    word_count = int(top_balance.get("word_count") or 0)
+    median = int(top_balance.get("median") or 0)
+    ratio = float(top_balance.get("ratio") or 0.0)
+    if kind == "oversized":
+        kind_label = "🔴 Split-Kandidat — Kapitel ist zu lang"
+    elif kind == "undersized":
+        kind_label = "🟡 Merge-Kandidat — Kapitel ist zu kurz"
+    else:
+        kind_label = "Strukturelles Risiko"
+    ratio_str = f"{ratio:.1f}×".replace(".0×", "×")
+    lines = [
+        "## Kapitel-Balance",
+        "",
+        (
+            "Der extremste Längen-Ausreißer im Manuskript — strukturelle "
+            "Schieflagen verraten oft, wo der Leser abbricht."
+        ),
+        "",
+        f"- {kind_label}",
+        f"- **Kapitel {index} — {title}** ({word_count} Wörter, Median {median})",
+        f"- Verhältnis zum Median: **{ratio_str}**",
+        "",
+        "**Fix:**",
+        "",
+        f"> {fix}",
+        "",
+        "Vollständige Balance-Tabelle siehe `chapter_review.md`.",
+        "",
+    ]
+    return lines
+
+
 def _render_top_arc(top_arc: dict[str, Any] | None) -> list[str]:
     """Render the 'Kapitel-Reihung' block from a top-arc payload.
 
@@ -976,6 +1032,7 @@ def render_beginner_summary(
     top_positioning: dict[str, Any] | None = None,
     top_persona: dict[str, Any] | None = None,
     top_arc: dict[str, Any] | None = None,
+    top_chapter_balance: dict[str, Any] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -1033,6 +1090,7 @@ def render_beginner_summary(
     lines.extend(_render_round_delta_highlight(round_delta_highlight))
     lines.extend(_render_score_history_highlight(score_history_highlight))
     lines.extend(_render_weakest_chapters(weakest_chapters))
+    lines.extend(_render_top_chapter_balance(top_chapter_balance))
     lines.extend(_render_weakest_sample(weakest_sample))
     lines.extend(_render_top_arc(top_arc))
     lines.extend(_render_top_persona(top_persona))
