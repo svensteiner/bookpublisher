@@ -13,6 +13,7 @@ from modules.chapter_arc import (
     ArcReport,
     ChapterPhase,
     build_arc_report,
+    extract_phase_overrides,
     render_arc_report_markdown,
 )
 from modules.chapters import Chapter
@@ -218,3 +219,237 @@ def test_missing_phase_fix_text_is_actionable():
     joined = " ".join(report.fixes)
     # Author-friendly guidance, not just a flag.
     assert "Loesung" in joined or "Methode" in joined or "Framework" in joined
+
+
+# --- Manual phase overrides ------------------------------------------------
+
+
+def test_chapter_phase_manual_override_field_defaults_to_false():
+    """Backwards compat: existing callers building ChapterPhase by hand work."""
+    phase = ChapterPhase(
+        index=1,
+        title="X",
+        phase=PHASE_PROBLEM,
+        marker_counts={p: 0 for p in CANONICAL_PHASES},
+        confidence=0,
+    )
+
+    assert phase.manual_override is False
+    assert phase.to_json()["manual_override"] is False
+
+
+def test_build_arc_report_applies_chapter_override():
+    """An override flips the heuristic's classification for that chapter."""
+    chapters = [
+        _chapter(1, "Cap1", PROBLEM_BODY),
+        _chapter(2, "Cap2", PROOF_BODY),  # heuristic → BEWEIS
+    ]
+
+    report = build_arc_report(
+        chapters,
+        phase_overrides={2: PHASE_SOLUTION},
+    )
+
+    chapter_two = next(item for item in report.sequence if item.index == 2)
+    assert chapter_two.phase == PHASE_SOLUTION
+    assert chapter_two.confidence == 100
+    assert chapter_two.manual_override is True
+
+
+def test_build_arc_report_override_confirming_heuristic_marks_manual():
+    """Explicitly overriding to the heuristic's pick still marks manual."""
+    chapters = [_chapter(1, "Cap", PROBLEM_BODY)]
+
+    report = build_arc_report(chapters, phase_overrides={1: PHASE_PROBLEM})
+
+    item = report.sequence[0]
+    assert item.phase == PHASE_PROBLEM
+    assert item.confidence == 100
+    assert item.manual_override is True
+
+
+def test_build_arc_report_ignores_overrides_with_unknown_phase():
+    chapters = [_chapter(1, "Cap", PROBLEM_BODY)]
+
+    report = build_arc_report(chapters, phase_overrides={1: "NICHTEXISTIERT"})
+
+    item = report.sequence[0]
+    # Heuristic result must survive — unknown phase keys are silently ignored
+    assert item.phase in CANONICAL_PHASES
+    assert item.manual_override is False
+
+
+def test_build_arc_report_overrides_change_arc_score_when_fixing_order():
+    """Override turns BEWEIS-first into PROBLEM-first → arc score improves."""
+    chapters = [
+        _chapter(1, "Cap1", PROOF_BODY),
+        _chapter(2, "Cap2", SOLUTION_BODY),
+        _chapter(3, "Cap3", PROOF_BODY),
+        _chapter(4, "Cap4", TRANSFORMATION_BODY),
+    ]
+    no_override = build_arc_report(chapters)
+
+    with_override = build_arc_report(
+        chapters,
+        phase_overrides={1: PHASE_PROBLEM},
+    )
+
+    assert with_override.arc_score >= no_override.arc_score
+
+
+def test_render_markdown_marks_manual_override_in_confidence_column():
+    chapters = [_chapter(1, "Mein Kapitel", PROBLEM_BODY)]
+    report = build_arc_report(chapters, phase_overrides={1: PHASE_TRANSFORMATION})
+
+    rendered = render_arc_report_markdown(_project(), report)
+
+    assert "*(manuell)*" in rendered
+    assert "🚀 TRANSFORMATION" in rendered  # phase emoji + label
+
+
+def test_render_markdown_omits_manual_marker_when_no_overrides():
+    chapters = [_chapter(1, "Cap", PROBLEM_BODY)]
+    report = build_arc_report(chapters)
+
+    rendered = render_arc_report_markdown(_project(), report)
+
+    assert "*(manuell)*" not in rendered
+
+
+def test_extract_phase_overrides_returns_empty_for_missing_section(tmp_path: Path):
+    meta = tmp_path / "metadata.md"
+    meta.write_text("# Buch\n\n## Beschreibung\n\nText.\n", encoding="utf-8")
+    project = BookProject(
+        project_id="x",
+        root=tmp_path,
+        metadata_files=[meta],
+        notes_files=[],
+    )
+
+    assert extract_phase_overrides(project) == {}
+
+
+def test_extract_phase_overrides_parses_canonical_section(tmp_path: Path):
+    meta = tmp_path / "metadata.md"
+    meta.write_text(
+        "## Kapitel-Phasen\n\n"
+        "Kapitel 1: PROBLEM\n"
+        "Kapitel 2: LOESUNG\n"
+        "Kapitel 3: BEWEIS\n"
+        "Kapitel 4: TRANSFORMATION\n\n"
+        "## Andere Sektion\n",
+        encoding="utf-8",
+    )
+    project = BookProject(
+        project_id="x",
+        root=tmp_path,
+        metadata_files=[meta],
+        notes_files=[],
+    )
+
+    assert extract_phase_overrides(project) == {
+        1: PHASE_PROBLEM,
+        2: PHASE_SOLUTION,
+        3: PHASE_PROOF,
+        4: PHASE_TRANSFORMATION,
+    }
+
+
+def test_extract_phase_overrides_accepts_umlauts_and_aliases(tmp_path: Path):
+    meta = tmp_path / "metadata.md"
+    meta.write_text(
+        "## Kapitel-Phasen\n"
+        "1: Lösung\n"
+        "2: methode\n"
+        "3: case\n"
+        "4: wirkung\n",
+        encoding="utf-8",
+    )
+    project = BookProject(
+        project_id="x",
+        root=tmp_path,
+        metadata_files=[meta],
+        notes_files=[],
+    )
+
+    overrides = extract_phase_overrides(project)
+
+    assert overrides[1] == PHASE_SOLUTION
+    assert overrides[2] == PHASE_SOLUTION  # alias "methode"
+    assert overrides[3] == PHASE_PROOF  # alias "case"
+    assert overrides[4] == PHASE_TRANSFORMATION  # alias "wirkung"
+
+
+def test_extract_phase_overrides_strips_list_prefixes(tmp_path: Path):
+    meta = tmp_path / "metadata.md"
+    meta.write_text(
+        "## Kapitel-Phasen\n"
+        "- 1: PROBLEM\n"
+        "* 2: LOESUNG\n"
+        "3. 3: BEWEIS\n",
+        encoding="utf-8",
+    )
+    project = BookProject(
+        project_id="x",
+        root=tmp_path,
+        metadata_files=[meta],
+        notes_files=[],
+    )
+
+    overrides = extract_phase_overrides(project)
+
+    assert 1 in overrides
+    assert 2 in overrides
+    assert 3 in overrides
+
+
+def test_extract_phase_overrides_skips_unrecognized_phase(tmp_path: Path):
+    meta = tmp_path / "metadata.md"
+    meta.write_text(
+        "## Kapitel-Phasen\n"
+        "1: PROBLEM\n"
+        "2: FREESTYLE\n"
+        "3: BEWEIS\n",
+        encoding="utf-8",
+    )
+    project = BookProject(
+        project_id="x",
+        root=tmp_path,
+        metadata_files=[meta],
+        notes_files=[],
+    )
+
+    overrides = extract_phase_overrides(project)
+
+    assert overrides == {1: PHASE_PROBLEM, 3: PHASE_PROOF}
+
+
+def test_extract_phase_overrides_first_value_wins_for_duplicate_index(tmp_path: Path):
+    meta = tmp_path / "metadata.md"
+    meta.write_text(
+        "## Kapitel-Phasen\n"
+        "1: PROBLEM\n"
+        "1: LOESUNG\n",
+        encoding="utf-8",
+    )
+    project = BookProject(
+        project_id="x",
+        root=tmp_path,
+        metadata_files=[meta],
+        notes_files=[],
+    )
+
+    assert extract_phase_overrides(project) == {1: PHASE_PROBLEM}
+
+
+def test_extract_phase_overrides_handles_missing_files_gracefully(tmp_path: Path):
+    """A path that no longer exists must not crash the extractor."""
+    missing = tmp_path / "ghost.md"
+    project = BookProject(
+        project_id="x",
+        root=tmp_path,
+        metadata_files=[missing],
+        notes_files=[],
+    )
+
+    assert extract_phase_overrides(project) == {}

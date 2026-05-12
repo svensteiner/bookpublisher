@@ -6,6 +6,7 @@ from pathlib import Path
 from modules.chapter_arc import (
     ArcReport,
     build_arc_report,
+    extract_phase_overrides,
     render_arc_report_markdown,
 )
 from modules.chapters import (
@@ -228,11 +229,12 @@ def chapter_arc_review(project: BookProject) -> tuple[str, dict]:
     can write an artifact instead of failing the pipeline.
     """
 
+    overrides = extract_phase_overrides(project)
     if not project.manuscript:
-        empty = build_arc_report([])
+        empty = build_arc_report([], phase_overrides=overrides)
         return render_arc_report_markdown(project, empty), empty.to_json()
     chapters = extract_docx_chapters(project.manuscript)
-    report = build_arc_report(chapters)
+    report = build_arc_report(chapters, phase_overrides=overrides)
     return render_arc_report_markdown(project, report), report.to_json()
 
 

@@ -115,6 +115,7 @@ class ChapterPhase:
     phase: str
     marker_counts: dict[str, int]
     confidence: int
+    manual_override: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -123,7 +124,110 @@ class ChapterPhase:
             "phase": self.phase,
             "marker_counts": dict(self.marker_counts),
             "confidence": self.confidence,
+            "manual_override": self.manual_override,
         }
+
+
+# Author-friendly phase aliases accepted in the manual `## Kapitel-Phasen`
+# metadata block. Maps ascii-folded lowercase input → canonical phase key.
+_PHASE_ALIASES: dict[str, str] = {
+    "problem": PHASE_PROBLEM,
+    "pain": PHASE_PROBLEM,
+    "schmerz": PHASE_PROBLEM,
+    "loesung": PHASE_SOLUTION,
+    "lösung": PHASE_SOLUTION,
+    "solution": PHASE_SOLUTION,
+    "methode": PHASE_SOLUTION,
+    "framework": PHASE_SOLUTION,
+    "beweis": PHASE_PROOF,
+    "proof": PHASE_PROOF,
+    "case": PHASE_PROOF,
+    "fallstudie": PHASE_PROOF,
+    "transformation": PHASE_TRANSFORMATION,
+    "wirkung": PHASE_TRANSFORMATION,
+    "ergebnis": PHASE_TRANSFORMATION,
+    "outcome": PHASE_TRANSFORMATION,
+}
+
+# Section header that holds per-chapter phase overrides in metadata.md.
+# Body lines look like "Kapitel 1: PROBLEM", "1: LOESUNG", "- 2: Beweis"
+# etc.; everything before the colon is the chapter index, everything
+# after is the phase alias.
+_PHASE_OVERRIDE_HEADER_RE = re.compile(
+    r"^##\s*(?:kapitel[\s-]+phasen|chapter[\s-]+phases)\b.*$",
+    flags=re.I,
+)
+_PHASE_OVERRIDE_LINE_RE = re.compile(
+    r"^\s*[\-\*\d\.\)\s]*\s*(?:kapitel\s+)?(\d+)\s*[:\-–]\s*([\wäöüß]+)\s*$",
+    flags=re.I,
+)
+_NEXT_SECTION_RE_ARC = re.compile(r"^##\s+", flags=re.I)
+
+
+def _normalize_phase_alias(raw: str) -> str | None:
+    """Return the canonical phase for an author-supplied alias.
+
+    Folds umlauts and lowercases the input so ``LÖSUNG``, ``Loesung``,
+    ``LOESUNG`` and ``lösung`` all resolve to the same phase.
+    """
+
+    cleaned = raw.strip().lower()
+    cleaned = (
+        cleaned.replace("ä", "ae").replace("ö", "oe")
+        .replace("ü", "ue").replace("ß", "ss")
+    )
+    return _PHASE_ALIASES.get(cleaned)
+
+
+def extract_phase_overrides(project: BookProject) -> dict[int, str]:
+    """Return author-declared chapter→phase overrides from project metadata.
+
+    Reads every ``.md`` / ``.txt`` file in
+    ``project.metadata_files + project.notes_files`` and scrapes any
+    ``## Kapitel-Phasen`` / ``## Chapter-Phases`` section. Each body
+    line maps a chapter index to one of the four canonical phases via
+    :data:`_PHASE_ALIASES`. Lines that don't match the expected
+    ``<index>: <phase>`` pattern are silently skipped — the author is
+    not punished for free-text notes inside the section.
+
+    Returns an empty dict when no override section exists (which is the
+    normal case — overrides only matter when the heuristic misclassifies).
+    """
+
+    out: dict[int, str] = {}
+    sources: list[Any] = list(getattr(project, "metadata_files", []) or [])
+    sources.extend(getattr(project, "notes_files", []) or [])
+    for path in sources:
+        try:
+            if not path.exists() or path.suffix.lower() not in {".md", ".txt"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = text.splitlines()
+        idx = 0
+        while idx < len(lines):
+            line = lines[idx].rstrip()
+            if _PHASE_OVERRIDE_HEADER_RE.match(line):
+                idx += 1
+                while idx < len(lines):
+                    body = lines[idx].rstrip()
+                    if _NEXT_SECTION_RE_ARC.match(body):
+                        break
+                    match = _PHASE_OVERRIDE_LINE_RE.match(body)
+                    if match:
+                        try:
+                            chapter_index = int(match.group(1))
+                        except (TypeError, ValueError):
+                            idx += 1
+                            continue
+                        phase = _normalize_phase_alias(match.group(2))
+                        if phase is not None and chapter_index not in out:
+                            out[chapter_index] = phase
+                    idx += 1
+                continue
+            idx += 1
+    return out
 
 
 @dataclass(frozen=True)
@@ -292,8 +396,20 @@ def _fix_for_missing(phase: str) -> str:
     )
 
 
-def build_arc_report(chapters: list[Chapter]) -> ArcReport:
-    """Classify all chapters and score arc conformance."""
+def build_arc_report(
+    chapters: list[Chapter],
+    phase_overrides: dict[int, str] | None = None,
+) -> ArcReport:
+    """Classify all chapters and score arc conformance.
+
+    ``phase_overrides`` lets the author override the heuristic
+    classification for individual chapters (keyed by chapter index → one
+    of :data:`CANONICAL_PHASES`). Overridden chapters get
+    ``confidence=100`` and ``manual_override=True`` so the markdown can
+    mark them as *(manuell)*. Overrides win even at confidence 0 from
+    the heuristic — that's the whole point: the author knows their book
+    better than the regex marker set.
+    """
 
     if not chapters:
         return ArcReport(
@@ -308,11 +424,44 @@ def build_arc_report(chapters: list[Chapter]) -> ArcReport:
             ),
         )
 
+    overrides = {
+        int(idx): phase
+        for idx, phase in (phase_overrides or {}).items()
+        if phase in CANONICAL_PHASES
+    }
+
     total = len(chapters)
     sequence: list[ChapterPhase] = []
     for chapter in chapters:
         position_ratio = (chapter.index - 1) / max(1, total - 1) if total > 1 else 0.0
-        sequence.append(_classify_chapter(chapter, position_ratio))
+        classified = _classify_chapter(chapter, position_ratio)
+        override_phase = overrides.get(chapter.index)
+        if override_phase is not None and override_phase != classified.phase:
+            sequence.append(
+                ChapterPhase(
+                    index=classified.index,
+                    title=classified.title,
+                    phase=override_phase,
+                    marker_counts=classified.marker_counts,
+                    confidence=100,
+                    manual_override=True,
+                )
+            )
+        elif override_phase is not None:
+            # Author explicitly confirmed the heuristic's pick — mark
+            # the override flag but keep marker counts.
+            sequence.append(
+                ChapterPhase(
+                    index=classified.index,
+                    title=classified.title,
+                    phase=classified.phase,
+                    marker_counts=classified.marker_counts,
+                    confidence=100,
+                    manual_override=True,
+                )
+            )
+        else:
+            sequence.append(classified)
     seq_tuple = tuple(sequence)
 
     score, inversions = _arc_score(seq_tuple)
@@ -378,8 +527,13 @@ def render_arc_report_markdown(project: BookProject, report: ArcReport) -> str:
     for item in report.sequence:
         emoji = PHASE_EMOJI.get(item.phase, "•")
         title_safe = item.title.replace("|", "/")[:60]
+        confidence_text = (
+            f"{item.confidence}% *(manuell)*"
+            if item.manual_override
+            else f"{item.confidence}%"
+        )
         lines.append(
-            f"| {item.index} | {title_safe} | {emoji} {item.phase} | {item.confidence}% |"
+            f"| {item.index} | {title_safe} | {emoji} {item.phase} | {confidence_text} |"
         )
 
     if report.inversions:
