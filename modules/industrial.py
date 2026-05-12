@@ -464,6 +464,40 @@ def _render_gate_overview(report: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _render_gate_overview_table(report: dict[str, Any]) -> list[str]:
+    """Render a compact table view of all gates for ``industrial_qa_report.md``.
+
+    Power-user companion to :func:`_render_gate_overview`: shows the same
+    badge / score / status data, but in a tabular layout (Gate | Badge |
+    Score | Status) so reviewers can scan the gate verdict at a glance
+    before drilling into per-gate findings. Returns ``[]`` when there
+    are no gates — keeps the report clean for first runs.
+    """
+
+    gates = report.get("gates") or []
+    if not gates:
+        return []
+    lines: list[str] = [
+        "## Gate-Übersicht",
+        "",
+        "Skala: 🟢 ≥85 · 🟡 65–84 · 🔴 <65",
+        "",
+        "| Gate | Badge | Score | Status |",
+        "|---|---|---|---|",
+    ]
+    for gate in gates:
+        name = gate.get("name") or ""
+        score = int(gate.get("score") or 0)
+        blocking = (gate.get("status") == "FIX") and score >= SCORE_REVIEW_THRESHOLD
+        badge, status = score_badge(score, blocking=blocking)
+        if gate.get("status") == "FIX" and status != "FIX":
+            badge, status = SCORE_BADGE_FIX, "FIX"
+        label = GATE_DISPLAY_LABELS.get(name, name.replace("_", " ").title())
+        lines.append(f"| {label} | {badge} | {score}/100 | {status} |")
+    lines.append("")
+    return lines
+
+
 def _render_weakest_chapters(weakest_chapters: list[dict[str, Any]] | None) -> list[str]:
     """Render the 'Schwächste Kapitel' block from a list of weakest-chapter dicts.
 
@@ -1372,6 +1406,7 @@ def render_industrial_qa_markdown(report: dict[str, Any]) -> str:
                 f"- Previous industrial score: {latest.get('industrial_score', 'n/a')}",
                 "",
             ])
+    lines.extend(_render_gate_overview_table(report))
     lines.extend([
         "## Gates",
         "",

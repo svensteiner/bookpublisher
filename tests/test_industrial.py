@@ -280,6 +280,83 @@ def test_render_industrial_qa_markdown_prefixes_each_gate_with_badge():
         assert header_present, f"No badge for gate {gate['name']} in markdown"
 
 
+def test_render_industrial_qa_markdown_includes_gate_overview_table():
+    """Power-user table: Gate | Badge | Score | Status before the per-gate sections."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    markdown = render_industrial_qa_markdown(result)
+
+    assert "## Gate-Übersicht" in markdown
+    assert "| Gate | Badge | Score | Status |" in markdown
+    assert "|---|---|---|---|" in markdown
+    # Skala line surfaces the unified threshold scheme
+    assert "Skala: 🟢 ≥85 · 🟡 65–84 · 🔴 <65" in markdown
+
+
+def test_gate_overview_table_appears_before_per_gate_sections():
+    """Power users scan the table first; ## Gates header must come AFTER it."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    markdown = render_industrial_qa_markdown(result)
+
+    overview_idx = markdown.index("## Gate-Übersicht")
+    gates_idx = markdown.index("## Gates")
+    assert overview_idx < gates_idx
+
+
+def test_gate_overview_table_contains_one_row_per_gate():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    markdown = render_industrial_qa_markdown(result)
+
+    # Each gate should appear as a row in the overview table — by the
+    # German display label (so the table reads cleanly for the author).
+    for gate in result["gates"]:
+        name = gate["name"]
+        label = {
+            "asset_completeness": "Dateien vollständig",
+            "metadata_and_storefront": "Amazon-Metadaten",
+            "kindle_ebook_readiness": "Kindle-Lesbarkeit",
+            "production_package": "Produktionspaket",
+            "amazon_sellability": "Amazon-Verkaufbarkeit",
+        }.get(name, name.replace("_", " ").title())
+        # Look for a pipe-separated row that contains the label
+        row_present = any(
+            line.startswith("| ") and label in line and "/100" in line
+            for line in markdown.splitlines()
+        )
+        assert row_present, f"Gate {name} ({label}) missing from overview table"
+
+
+def test_gate_overview_table_uses_score_badge_per_row():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    markdown = render_industrial_qa_markdown(result)
+    badge_chars = (SCORE_BADGE_READY, SCORE_BADGE_REVIEW, SCORE_BADGE_FIX)
+
+    # Find the overview table block and check that every row carries
+    # a unified score-badge emoji
+    lines = markdown.splitlines()
+    in_table = False
+    rows_seen = 0
+    for line in lines:
+        if line.startswith("| Gate | Badge |"):
+            in_table = True
+            continue
+        if in_table:
+            if not line.startswith("|") or line.startswith("|---"):
+                if line.startswith("|---"):
+                    continue
+                break
+            rows_seen += 1
+            assert any(b in line for b in badge_chars), f"Row missing badge: {line}"
+    assert rows_seen >= 1
+
+
+def test_gate_overview_table_omitted_when_no_gates():
+    """Defensive: empty gates list must not produce a stub table."""
+    from modules.industrial import _render_gate_overview_table
+
+    assert _render_gate_overview_table({"gates": []}) == []
+    assert _render_gate_overview_table({}) == []
+
+
 def test_overall_score_line_has_unified_badge():
     result = build_industrial_qa(_project(manuscript=None, cover=None))
     summary = render_beginner_summary(_project(manuscript=None, cover=None), result)
