@@ -24,6 +24,7 @@ from modules.kdp_keywords import (
     render_kdp_keywords_report_markdown,
 )
 from modules.llm import LLMClient
+from modules.persona_match import build_persona_match_report, render_persona_match_section
 from modules.personas import PersonaReport, build_persona_report, render_persona_report_markdown
 from modules.review import (
     amazon_review,
@@ -788,14 +789,24 @@ class PublisherPipeline:
                     missing_phases=arc_json.get("missing_phases") or [],
                 )
             self.writer.write_text("kindle_preview_check.md", render_kindle_preview_check(project), project.project_id)
+            persona_match = build_persona_match_report(
+                persona_report,
+                project.amazon_description,
+            )
+            persona_md = render_persona_report_markdown(project, persona_report)
+            match_section = render_persona_match_section(persona_match)
+            if match_section:
+                persona_md = persona_md.rstrip("\n") + "\n\n" + match_section
             self.writer.write_text(
                 "buyer_personas.md",
-                render_persona_report_markdown(project, persona_report),
+                persona_md,
                 project.project_id,
             )
+            persona_json = persona_report.to_json()
+            persona_json["match"] = persona_match.to_json()
             self.writer.write_json(
                 "buyer_personas.json",
-                persona_report.to_json(),
+                persona_json,
                 project.project_id,
             )
             self.logger.log(
@@ -804,6 +815,8 @@ class PublisherPipeline:
                 niche=persona_report.niche_key,
                 persona_count=len(persona_report.personas),
                 signal_flags=persona_report.signal_flags,
+                match_score=persona_match.overall_score,
+                match_status=persona_match.status,
             )
             self.writer.write_text(
                 "amazon_research_brief.md",
