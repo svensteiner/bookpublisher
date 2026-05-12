@@ -111,6 +111,29 @@ Full review round with OpenAI:
 cd /d "C:\Automatisierungen\github projekte\bookpublisher" && python main.py round --full-review
 ```
 
+### Exit codes
+
+The CLI returns a stable exit code so power-users can wire it into shell
+scripts and CI pipelines. The codes are defined as named constants in
+`modules/cli.py` (`EXIT_SUCCESS`, `EXIT_GENERIC_ERROR`,
+`EXIT_CONFIG_ERROR`, `EXIT_MANUSCRIPT_ERROR`).
+
+| Code | Constant | Meaning | Typical cause |
+|---|---|---|---|
+| 0 | `EXIT_SUCCESS` | Run completed without raising | Normal exit |
+| 1 | `EXIT_GENERIC_ERROR` | Unexpected exception | Bug, OS issue, unhandled error |
+| 2 | `EXIT_CONFIG_ERROR` | Configuration or API-key problem | Missing `ANTHROPIC_API_KEY`, invalid `config.yaml`, unreadable secret |
+| 3 | `EXIT_MANUSCRIPT_ERROR` | DOCX could not be opened or parsed | File missing, corrupt zip, wrong format, permission denied |
+
+PowerShell example:
+
+```powershell
+python main.py qa --input-path "C:\Books\MyBook"
+if ($LASTEXITCODE -eq 0) { Write-Host "OK" }
+elseif ($LASTEXITCODE -eq 3) { Write-Host "Bitte Manuskript pruefen." }
+else { Write-Host "Lauf fehlgeschlagen mit Code $LASTEXITCODE" }
+```
+
 ## Outputs
 
 Main output folder:

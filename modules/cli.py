@@ -10,6 +10,15 @@ from modules.readers import ManuscriptReadError
 from modules.run_logger import RunLogger
 
 
+# CLI exit codes. Power-users binding the CLI into shell scripts rely on
+# these being stable — every change here must also update the table in
+# README.md under "## Run" so the contract stays explicit.
+EXIT_SUCCESS: int = 0
+EXIT_GENERIC_ERROR: int = 1
+EXIT_CONFIG_ERROR: int = 2
+EXIT_MANUSCRIPT_ERROR: int = 3
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Publisher Agent for Amazon KDP nonfiction books.")
     parser.add_argument("command", choices=["scan", "qa", "round", "review", "cover", "launch", "all"])
@@ -42,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Projects: {summary['project_count']}")
             print(f"Artifacts: {config.project_root / 'artifacts'}")
             print(f"Log: {logger.path}")
-            return 0
+            return EXIT_SUCCESS
         elif args.command == "review":
             projects = pipeline.run_review(input_path)
         elif args.command == "cover":
@@ -56,16 +65,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Done. Projects: {len(projects)}")
         print(f"Artifacts: {config.project_root / 'artifacts'}")
         print(f"Log: {logger.path}")
-        return 0
+        return EXIT_SUCCESS
     except ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        return 2
+        return EXIT_CONFIG_ERROR
     except ManuscriptReadError as exc:
         print(f"\nManuskript konnte nicht gelesen werden.\n\n{exc}\n", file=sys.stderr)
-        return 3
+        return EXIT_MANUSCRIPT_ERROR
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+        return EXIT_GENERIC_ERROR
 
 
 if __name__ == "__main__":
