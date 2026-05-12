@@ -514,6 +514,60 @@ REWRITE_FIELD_LABELS: dict[str, str] = {
 }
 
 
+def _render_top_arc(top_arc: dict[str, Any] | None) -> list[str]:
+    """Render the 'Kapitel-Reihung' block from a top-arc payload.
+
+    Surfaces the single biggest structural lever from ``chapter_arc.json``:
+    either a reorder fix from an inversion or a missing-phase fix. Skips
+    the section entirely when the manuscript follows the canonical
+    Problem → Lösung → Beweis → Transformation arc cleanly — no point
+    nagging the author when the structure is already sound.
+
+    The dict is expected to carry ``arc_score``, ``status``, ``top_fix``,
+    ``inversion_count`` and ``missing_count``. Returns an empty list when
+    ``top_arc`` is ``None``/empty or carries no usable ``top_fix`` (no
+    actionable lever to surface).
+    """
+
+    if not top_arc:
+        return []
+    top_fix = str(top_arc.get("top_fix") or "").strip()
+    if not top_fix:
+        return []
+    arc_score = int(top_arc.get("arc_score") or 0)
+    inversion_count = int(top_arc.get("inversion_count") or 0)
+    missing_count = int(top_arc.get("missing_count") or 0)
+    badge, _ = score_badge(arc_score)
+    lines = [
+        "## Kapitel-Reihung",
+        "",
+        (
+            "Folgt dein Buch dem klassischen Sachbuch-Bogen "
+            "(Problem → Lösung → Beweis → Transformation)?"
+        ),
+        "",
+        f"- {badge} Arc-Score: **{arc_score}/100**",
+    ]
+    if inversion_count:
+        lines.append(
+            f"- 🔁 Reihenfolge-Konflikte: **{inversion_count}**"
+        )
+    if missing_count:
+        lines.append(
+            f"- ⚠️ Fehlende Phasen: **{missing_count}**"
+        )
+    lines.extend([
+        "",
+        "**Größter Hebel:**",
+        "",
+        f"> {top_fix}",
+        "",
+        "Vollständige Phasen-Tabelle und alle Fixes siehe `chapter_arc.md`.",
+        "",
+    ])
+    return lines
+
+
 def _render_top_rewrite(top_rewrite: dict[str, Any] | None) -> list[str]:
     """Render the 'Top-Rewrite-Pick' block from a top-rewrite payload.
 
@@ -787,6 +841,64 @@ def _render_weakest_sample(weakest_sample: dict[str, Any] | None) -> list[str]:
     ]
 
 
+def _render_top_persona(
+    top_persona: dict[str, Any] | None,
+) -> list[str]:
+    """Render the 'Top-Persona' block from a top-persona payload.
+
+    Surfaces the single most likely buyer (Persona #1 of the persona
+    report) directly in beginner_summary so the author knows who they
+    must address in the first three description lines — without
+    opening ``buyer_personas.md`` separately.
+
+    The dict is expected to carry ``label``, ``age_range``, ``job``,
+    ``problem``, ``buying_motive``, ``anchor_quote``, ``niche_label``
+    and ``niche_confidence``. Returns an empty list when no payload is
+    provided or when both ``problem`` and ``buying_motive`` are empty
+    — keeping the summary clean if the report has no usable content.
+    """
+
+    if not top_persona:
+        return []
+    label = str(top_persona.get("label") or "").strip()
+    problem = str(top_persona.get("problem") or "").strip()
+    motive = str(top_persona.get("buying_motive") or "").strip()
+    if not problem and not motive:
+        return []
+    age_range = str(top_persona.get("age_range") or "").strip()
+    job = str(top_persona.get("job") or "").strip()
+    quote = str(top_persona.get("anchor_quote") or "").strip()
+    headline = label or "Persona 1"
+
+    lines: list[str] = [
+        "## Top-Persona",
+        "",
+        (
+            "Schreibe Titel, Untertitel und die ersten drei Beschreibungs-Zeilen "
+            "so, dass sich diese Persona sofort wiedererkennt."
+        ),
+        "",
+        f"**{headline}**",
+        "",
+    ]
+    if age_range:
+        lines.append(f"- **Alter:** {age_range}")
+    if job:
+        lines.append(f"- **Job / Rolle:** {job}")
+    if problem:
+        lines.append(f"- **Problem:** {problem}")
+    if motive:
+        lines.append(f"- **Kaufmotiv:** {motive}")
+    if quote:
+        lines.append(f"- **Mögliche Suchanfrage:** _{quote}_")
+    lines.extend([
+        "",
+        "Alle 3 Personas siehe `buyer_personas.md`.",
+        "",
+    ])
+    return lines
+
+
 def _render_top_positioning(
     top_positioning: dict[str, Any] | None,
 ) -> list[str]:
@@ -862,6 +974,8 @@ def render_beginner_summary(
     score_history_highlight: dict[str, Any] | None = None,
     top_kdp_keywords: list[dict[str, Any]] | None = None,
     top_positioning: dict[str, Any] | None = None,
+    top_persona: dict[str, Any] | None = None,
+    top_arc: dict[str, Any] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -920,6 +1034,8 @@ def render_beginner_summary(
     lines.extend(_render_score_history_highlight(score_history_highlight))
     lines.extend(_render_weakest_chapters(weakest_chapters))
     lines.extend(_render_weakest_sample(weakest_sample))
+    lines.extend(_render_top_arc(top_arc))
+    lines.extend(_render_top_persona(top_persona))
     lines.extend(_render_top_positioning(top_positioning))
     lines.extend(_render_top_rewrite(top_rewrite))
     lines.extend(_render_top_kdp_keywords(top_kdp_keywords))

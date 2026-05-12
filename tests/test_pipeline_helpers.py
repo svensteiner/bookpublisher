@@ -13,10 +13,13 @@ from modules.competitive_positioning import (
     PositioningReport,
 )
 from modules.kdp_keywords import KDPKeyword
+from modules.personas import BuyerPersona, PersonaReport
 from modules.pipeline import (
     _round_delta_payload,
     _score_history_payload,
+    _top_arc_payload,
     _top_kdp_keywords_payload,
+    _top_persona_payload,
     _top_positioning_payload,
     _top_rewrite_payload,
     _weakest_chapter_payload,
@@ -761,3 +764,187 @@ def test_top_positioning_payload_is_immutable_against_caller_mutation():
     # source angle is frozen and still carries the original claim
     assert report.unique_angles[0].claim != "mutated"
     assert report.positioning_pitch != "mutated"
+
+
+# ─── _top_persona_payload ───────────────────────────────────────────────
+
+
+def _persona(
+    *,
+    label: str = "Die operative CFO",
+    age_range: str = "40–55",
+    job: str = "CFO in einem KMU",
+    problem: str = "Liquidität, Forecast, Reporting — alles gleichzeitig.",
+    buying_motive: str = "Sucht ein Praxis-Playbook mit Checklisten.",
+    anchor_quote: str = "liquiditaet cfo playbook",
+) -> BuyerPersona:
+    return BuyerPersona(
+        label=label,
+        age_range=age_range,
+        job=job,
+        problem=problem,
+        buying_motive=buying_motive,
+        anchor_quote=anchor_quote,
+    )
+
+
+def _persona_report(
+    *,
+    personas: list[BuyerPersona] | None = None,
+    niche_label: str = "Finanzen / CFO / Controlling",
+    niche_confidence: int = 82,
+) -> PersonaReport:
+    if personas is None:
+        personas = [
+            _persona(),
+            _persona(label="Der ambitionierte Controller", age_range="30–42"),
+            _persona(label="Die selbstständige Beraterin", age_range="35–50"),
+        ]
+    return PersonaReport(
+        niche_key="finanzen_und_cfo",
+        niche_label=niche_label,
+        niche_confidence=niche_confidence,
+        audience="CFOs in KMU",
+        subject="ein Liquiditäts-Playbook",
+        personas=personas,
+        anchors=["cfo", "liquiditaet"],
+        signal_flags=[],
+    )
+
+
+def test_top_persona_payload_returns_none_when_report_missing():
+    assert _top_persona_payload(None) is None
+
+
+def test_top_persona_payload_returns_none_when_no_personas():
+    report = _persona_report(personas=[])
+    assert _top_persona_payload(report) is None
+
+
+def test_top_persona_payload_picks_first_persona():
+    """Persona #1 is by convention the most-likely buyer — it must win."""
+    report = _persona_report()
+    payload = _top_persona_payload(report)
+    assert payload is not None
+    assert payload["label"] == "Die operative CFO"
+    assert payload["age_range"] == "40–55"
+    assert "CFO" in payload["job"]
+    assert "Liquidität" in payload["problem"]
+    assert "Praxis-Playbook" in payload["buying_motive"]
+    assert payload["anchor_quote"] == "liquiditaet cfo playbook"
+
+
+def test_top_persona_payload_carries_niche_label_and_confidence():
+    report = _persona_report(niche_label="KI / Künstliche Intelligenz", niche_confidence=44)
+    payload = _top_persona_payload(report)
+    assert payload is not None
+    assert payload["niche_label"] == "KI / Künstliche Intelligenz"
+    assert payload["niche_confidence"] == 44
+
+
+def test_top_persona_payload_is_immutable_against_caller_mutation():
+    """Mutating the returned dict must not affect the source persona."""
+    report = _persona_report()
+    payload = _top_persona_payload(report)
+    assert payload is not None
+    payload["label"] = "mutated"
+    payload["problem"] = "mutated"
+    # source persona is frozen — the original fields remain intact
+    assert report.personas[0].label != "mutated"
+    assert report.personas[0].problem != "mutated"
+
+
+def test_top_persona_payload_returns_first_persona_even_with_one_only():
+    """If the report carries a single persona we still surface it."""
+    report = _persona_report(personas=[_persona(label="Solo")])
+    payload = _top_persona_payload(report)
+    assert payload is not None
+    assert payload["label"] == "Solo"
+
+
+# ─── _top_arc_payload ──────────────────────────────────────────────────
+
+
+def _arc_json(
+    *,
+    arc_score: int = 70,
+    status: str = "REVIEW",
+    fixes: list[str] | None = None,
+    inversions: list[list[int]] | None = None,
+    missing_phases: list[str] | None = None,
+) -> dict:
+    return {
+        "arc_score": arc_score,
+        "status": status,
+        "fixes": list(fixes if fixes is not None else ["Top fix line."]),
+        "inversions": list(inversions if inversions is not None else []),
+        "missing_phases": list(missing_phases if missing_phases is not None else []),
+    }
+
+
+def test_top_arc_payload_returns_none_when_no_report():
+    assert _top_arc_payload(None) is None
+    assert _top_arc_payload({}) is None
+
+
+def test_top_arc_payload_returns_none_when_no_fixes():
+    """A clean arc (canonical order, all phases) has nothing to surface."""
+    payload = _top_arc_payload(_arc_json(arc_score=100, status="READY", fixes=[]))
+    assert payload is None
+
+
+def test_top_arc_payload_returns_none_when_top_fix_is_blank():
+    """A blank or whitespace-only fix must not produce a noisy section."""
+    payload = _top_arc_payload(_arc_json(fixes=["   "]))
+    assert payload is None
+
+
+def test_top_arc_payload_picks_first_fix_with_counts():
+    arc = _arc_json(
+        arc_score=58,
+        status="FIX",
+        fixes=[
+            "Kapitel 3 vor Kapitel 2 ziehen — LÖSUNG kommt vor BEWEIS.",
+            "Es fehlt ein klares Problem-Kapitel.",
+        ],
+        inversions=[[3, 2], [4, 2]],
+        missing_phases=["PROBLEM"],
+    )
+    payload = _top_arc_payload(arc)
+    assert payload is not None
+    assert payload["arc_score"] == 58
+    assert payload["status"] == "FIX"
+    assert payload["top_fix"].startswith("Kapitel 3 vor Kapitel 2")
+    assert payload["inversion_count"] == 2
+    assert payload["missing_count"] == 1
+
+
+def test_top_arc_payload_strips_whitespace_from_top_fix():
+    arc = _arc_json(fixes=["  Es fehlt ein Beweis-Kapitel.  "])
+    payload = _top_arc_payload(arc)
+    assert payload is not None
+    assert payload["top_fix"] == "Es fehlt ein Beweis-Kapitel."
+
+
+def test_top_arc_payload_tolerates_missing_optional_fields():
+    """Partial dicts should not crash — counts default to 0."""
+    payload = _top_arc_payload({"fixes": ["Sorting fix"]})
+    assert payload is not None
+    assert payload["top_fix"] == "Sorting fix"
+    assert payload["arc_score"] == 0
+    assert payload["status"] == ""
+    assert payload["inversion_count"] == 0
+    assert payload["missing_count"] == 0
+
+
+def test_top_arc_payload_is_immutable_against_caller_mutation():
+    """Mutating the returned dict must not affect a later call's behaviour."""
+    arc = _arc_json(fixes=["First"], inversions=[[1, 2]])
+    payload = _top_arc_payload(arc)
+    assert payload is not None
+    payload["top_fix"] = "TAMPERED"
+    payload["inversion_count"] = 999
+    fresh = _top_arc_payload(arc)
+    assert fresh is not None
+    assert fresh["top_fix"] == "First"
+    assert fresh["inversion_count"] == 1

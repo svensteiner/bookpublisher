@@ -24,7 +24,7 @@ from modules.kdp_keywords import (
     render_kdp_keywords_report_markdown,
 )
 from modules.llm import LLMClient
-from modules.personas import build_persona_report, render_persona_report_markdown
+from modules.personas import PersonaReport, build_persona_report, render_persona_report_markdown
 from modules.review import (
     amazon_review,
     chapter_arc_review,
@@ -302,6 +302,50 @@ def _top_kdp_keywords_payload(
     return picked
 
 
+def _top_persona_payload(
+    persona_report: PersonaReport | None,
+) -> dict | None:
+    """Compact buyer-persona highlight for beginner_summary.
+
+    Surfaces the single most likely buyer (Persona #1 of the report)
+    so the author sees who to write the first three description lines
+    for, without opening ``buyer_personas.md`` separately. Persona #1
+    is by convention the most likely buyer in the niche baseline — the
+    persona report itself sorts personas by representativeness, so
+    picking the first one is deterministic.
+
+    Returns ``None`` when there is no persona report or when the report
+    carries no personas at all — the section is then omitted entirely
+    to keep the summary clean for first runs before metadata is in
+    place.
+
+    The returned dict carries ``label``, ``age_range``, ``job``,
+    ``problem``, ``buying_motive``, ``anchor_quote`` and
+    ``niche_label`` / ``niche_confidence`` — exactly what the renderer
+    needs without re-reading the report.
+
+    The helper is immutable: it copies values out so a caller mutating
+    the returned dict cannot affect the source report.
+    """
+
+    if persona_report is None:
+        return None
+    personas = list(persona_report.personas or [])
+    if not personas:
+        return None
+    top = personas[0]
+    return {
+        "label": top.label,
+        "age_range": top.age_range,
+        "job": top.job,
+        "problem": top.problem,
+        "buying_motive": top.buying_motive,
+        "anchor_quote": top.anchor_quote,
+        "niche_label": persona_report.niche_label,
+        "niche_confidence": int(persona_report.niche_confidence),
+    }
+
+
 def _top_positioning_payload(
     positioning: PositioningReport | None,
 ) -> dict | None:
@@ -345,6 +389,40 @@ def _top_positioning_payload(
         "niche_label": positioning.niche_label,
         "niche_confidence": int(positioning.niche_confidence),
         "audience": positioning.audience,
+    }
+
+
+def _top_arc_payload(arc_json: dict | None) -> dict | None:
+    """Extract the single biggest structural lever from a chapter_arc payload.
+
+    Returns ``None`` when arc data is unavailable, when the arc has no
+    fixes (canonical Problem → Lösung → Beweis → Transformation order with
+    all phases present), or when there is no actionable ``top_fix`` to
+    surface. The author should only see this block when there is a real
+    structural lever to pull — anything else is noise.
+
+    When a fix exists, returns an immutable dict with ``arc_score``,
+    ``status``, ``top_fix`` (the first fix from the report — fixes are
+    already ordered with inversion-fixes first, then missing-phase fixes),
+    ``inversion_count`` and ``missing_count``.
+    """
+
+    if not arc_json:
+        return None
+    fixes = arc_json.get("fixes") or []
+    if not fixes:
+        return None
+    top_fix = str(fixes[0] or "").strip()
+    if not top_fix:
+        return None
+    inversions = arc_json.get("inversions") or []
+    missing = arc_json.get("missing_phases") or []
+    return {
+        "arc_score": int(arc_json.get("arc_score") or 0),
+        "status": str(arc_json.get("status") or ""),
+        "top_fix": top_fix,
+        "inversion_count": len(inversions),
+        "missing_count": len(missing),
     }
 
 
@@ -555,6 +633,19 @@ class PublisherPipeline:
             top_kdp_keywords = _top_kdp_keywords_payload(kdp_keywords)
             positioning = build_positioning_report(project)
             top_positioning = _top_positioning_payload(positioning)
+            persona_report = build_persona_report(project, chapter_titles=chapter_titles)
+            top_persona = _top_persona_payload(persona_report)
+            arc_md: str | None = None
+            arc_json: dict | None = None
+            try:
+                arc_md, arc_json = chapter_arc_review(project)
+            except RuntimeError as exc:
+                self.logger.log(
+                    "chapter_arc_skipped",
+                    project_id=project.project_id,
+                    reason=str(exc),
+                )
+            top_arc = _top_arc_payload(arc_json)
             self.writer.write_text(
                 "beginner_summary.md",
                 render_beginner_summary(
@@ -567,14 +658,15 @@ class PublisherPipeline:
                     score_history_highlight=score_history_highlight,
                     top_kdp_keywords=top_kdp_keywords,
                     top_positioning=top_positioning,
+                    top_persona=top_persona,
+                    top_arc=top_arc,
                 ),
                 project.project_id,
             )
             if chapter_md is not None and chapter_json is not None:
                 self.writer.write_text("chapter_review.md", chapter_md, project.project_id)
                 self.writer.write_json("chapter_review.json", chapter_json, project.project_id)
-            try:
-                arc_md, arc_json = chapter_arc_review(project)
+            if arc_md is not None and arc_json is not None:
                 self.writer.write_text("chapter_arc.md", arc_md, project.project_id)
                 self.writer.write_json("chapter_arc.json", arc_json, project.project_id)
                 self.logger.log(
@@ -584,14 +676,7 @@ class PublisherPipeline:
                     inversions=len(arc_json.get("inversions") or []),
                     missing_phases=arc_json.get("missing_phases") or [],
                 )
-            except RuntimeError as exc:
-                self.logger.log(
-                    "chapter_arc_skipped",
-                    project_id=project.project_id,
-                    reason=str(exc),
-                )
             self.writer.write_text("kindle_preview_check.md", render_kindle_preview_check(project), project.project_id)
-            persona_report = build_persona_report(project, chapter_titles=chapter_titles)
             self.writer.write_text(
                 "buyer_personas.md",
                 render_persona_report_markdown(project, persona_report),

@@ -866,6 +866,97 @@ def test_render_beginner_summary_top_positioning_handles_partial_payload():
     assert "Stärke: 0/100" in summary
 
 
+def test_render_beginner_summary_top_persona_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_persona = {
+        "label": "Die operative CFO",
+        "age_range": "40–55",
+        "job": "CFO oder kaufmännische Leiterin in einem KMU",
+        "problem": "Liquidität, Forecast, Reporting — alles gleichzeitig.",
+        "buying_motive": "Sucht ein Praxis-Playbook mit Checklisten.",
+        "anchor_quote": "liquiditaet cfo playbook",
+        "niche_label": "Finanzen / CFO / Controlling",
+        "niche_confidence": 80,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_persona=top_persona
+    )
+    assert "## Top-Persona" in summary
+    assert "Die operative CFO" in summary
+    assert "40–55" in summary
+    assert "kaufmännische Leiterin" in summary
+    assert "Liquidität, Forecast" in summary
+    assert "Praxis-Playbook" in summary
+    assert "liquiditaet cfo playbook" in summary
+    assert "`buyer_personas.md`" in summary
+
+
+def test_render_beginner_summary_top_persona_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_persona=None
+    )
+    assert "## Top-Persona" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_persona={}
+    )
+    assert "## Top-Persona" not in summary_empty
+
+
+def test_render_beginner_summary_top_persona_section_absent_when_no_content():
+    """Both problem and buying_motive empty → no actionable signal → skip."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_persona = {
+        "label": "Persona ohne Inhalt",
+        "age_range": "30",
+        "job": "Job",
+        "problem": "   ",
+        "buying_motive": "",
+        "anchor_quote": "",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_persona=top_persona
+    )
+    assert "## Top-Persona" not in summary
+
+
+def test_render_beginner_summary_top_persona_handles_partial_payload():
+    """Missing optional fields must not crash the renderer."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_persona = {
+        "label": "Solo",
+        "problem": "Hat keine Zeit, jeden Tag neu zu starten.",
+        "buying_motive": "Will eine schnelle Methode.",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_persona=top_persona
+    )
+    assert "## Top-Persona" in summary
+    assert "Solo" in summary
+    assert "Hat keine Zeit" in summary
+    # No "Alter:" line when age_range missing
+    assert "Alter:" not in summary
+    # No "Mögliche Suchanfrage:" line when anchor_quote missing
+    assert "Mögliche Suchanfrage" not in summary
+
+
+def test_render_beginner_summary_top_persona_falls_back_to_default_label():
+    """Empty label still surfaces problem/motive with a generic headline."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_persona = {
+        "label": "",
+        "problem": "Pain X",
+        "buying_motive": "Motive Y",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_persona=top_persona
+    )
+    assert "## Top-Persona" in summary
+    assert "Persona 1" in summary
+    assert "Pain X" in summary
+    assert "Motive Y" in summary
+
+
 def test_render_beginner_summary_top_positioning_low_strength_uses_review_badge():
     """A strength of 70 must render with the REVIEW (yellow) badge."""
     result = build_industrial_qa(_project(manuscript=None, cover=None))
@@ -885,3 +976,100 @@ def test_render_beginner_summary_top_positioning_low_strength_uses_review_badge(
     section_end = summary.index("competitive_positioning.md", section_start)
     section = summary[section_start:section_end]
     assert SCORE_BADGE_REVIEW in section
+
+
+# ─── render_beginner_summary: top_arc ──────────────────────────────────
+
+
+def test_render_beginner_summary_top_arc_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_arc = {
+        "arc_score": 60,
+        "status": "FIX",
+        "top_fix": "Kapitel 3 vor Kapitel 2 ziehen — LÖSUNG kommt vor BEWEIS.",
+        "inversion_count": 2,
+        "missing_count": 1,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_arc=top_arc
+    )
+    assert "## Kapitel-Reihung" in summary
+    assert "60/100" in summary
+    assert "Kapitel 3 vor Kapitel 2 ziehen" in summary
+    assert "Reihenfolge-Konflikte: **2**" in summary
+    assert "Fehlende Phasen: **1**" in summary
+    assert "`chapter_arc.md`" in summary
+    section_start = summary.index("## Kapitel-Reihung")
+    section_end = summary.index("`chapter_arc.md`", section_start)
+    section = summary[section_start:section_end]
+    assert SCORE_BADGE_FIX in section
+
+
+def test_render_beginner_summary_top_arc_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_arc=None
+    )
+    assert "## Kapitel-Reihung" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_arc={}
+    )
+    assert "## Kapitel-Reihung" not in summary_empty
+
+
+def test_render_beginner_summary_top_arc_section_absent_when_top_fix_empty():
+    """Without an actionable fix, the structural section must stay hidden."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_arc = {
+        "arc_score": 95,
+        "status": "READY",
+        "top_fix": "   ",
+        "inversion_count": 0,
+        "missing_count": 0,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_arc=top_arc
+    )
+    assert "## Kapitel-Reihung" not in summary
+
+
+def test_render_beginner_summary_top_arc_hides_zero_counts():
+    """Inversion/missing rows must only appear when counts > 0."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_arc = {
+        "arc_score": 70,
+        "status": "REVIEW",
+        "top_fix": "Es fehlt ein Beweis-Kapitel — eine Fallstudie einsetzen.",
+        "inversion_count": 0,
+        "missing_count": 1,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_arc=top_arc
+    )
+    section_start = summary.index("## Kapitel-Reihung")
+    section_end = summary.index("`chapter_arc.md`", section_start)
+    section = summary[section_start:section_end]
+    assert "Reihenfolge-Konflikte" not in section
+    assert "Fehlende Phasen: **1**" in section
+    # 70 sits in the REVIEW band — badge must be yellow.
+    assert SCORE_BADGE_REVIEW in section
+
+
+def test_render_beginner_summary_top_arc_ready_badge_for_high_score():
+    """A high arc_score must render the READY badge even if a top_fix exists."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_arc = {
+        "arc_score": 90,
+        "status": "READY",
+        "top_fix": "Optional: BEWEIS-Phase mit zusätzlicher Zahl untermauern.",
+        "inversion_count": 0,
+        "missing_count": 0,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_arc=top_arc
+    )
+    section_start = summary.index("## Kapitel-Reihung")
+    section_end = summary.index("`chapter_arc.md`", section_start)
+    section = summary[section_start:section_end]
+    assert SCORE_BADGE_READY in section
+    assert "90/100" in section
