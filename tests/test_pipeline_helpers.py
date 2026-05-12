@@ -18,6 +18,7 @@ from modules.persona_match import build_persona_match_report
 from modules.pipeline import (
     _amazon_html_preview_payload,
     _persona_match_payload,
+    _positioning_score,
     _round_delta_payload,
     _score_history_payload,
     _top_arc_payload,
@@ -1443,3 +1444,80 @@ def test_amazon_html_preview_payload_bullets_are_tuple():
     payload = _amazon_html_preview_payload(snippet)
     assert payload is not None
     assert isinstance(payload["bullets"], tuple)
+
+
+# ─── _positioning_score ────────────────────────────────────────────────
+
+
+def test_positioning_score_returns_none_when_report_missing():
+    assert _positioning_score(None) is None
+
+
+def test_positioning_score_returns_none_when_no_angles():
+    report = _positioning(angles=[])
+    assert _positioning_score(report) is None
+
+
+def test_positioning_score_skips_kein_signal_angle():
+    report = _positioning(angles=[
+        DifferentiationAngle(
+            key="kein_signal",
+            claim="x",
+            evidence="y",
+            strength=0,
+        )
+    ])
+    assert _positioning_score(report) is None
+
+
+def test_positioning_score_averages_top_three_angles():
+    angles = [
+        DifferentiationAngle(key="a", claim="a", evidence="e", strength=90),
+        DifferentiationAngle(key="b", claim="b", evidence="e", strength=70),
+        DifferentiationAngle(key="c", claim="c", evidence="e", strength=50),
+        DifferentiationAngle(key="d", claim="d", evidence="e", strength=20),
+    ]
+    report = _positioning(angles=angles)
+    # average of top-3: (90 + 70 + 50) / 3 = 70
+    assert _positioning_score(report) == 70
+
+
+def test_positioning_score_handles_single_angle():
+    angles = [
+        DifferentiationAngle(key="a", claim="a", evidence="e", strength=80),
+    ]
+    report = _positioning(angles=angles)
+    assert _positioning_score(report) == 80
+
+
+def test_positioning_score_rounds_average():
+    angles = [
+        DifferentiationAngle(key="a", claim="a", evidence="e", strength=80),
+        DifferentiationAngle(key="b", claim="b", evidence="e", strength=70),
+        DifferentiationAngle(key="c", claim="c", evidence="e", strength=63),
+    ]
+    report = _positioning(angles=angles)
+    # avg = 71.0 → rounded to 71
+    assert _positioning_score(report) == 71
+
+
+def test_positioning_score_filters_zero_strength_angles():
+    angles = [
+        DifferentiationAngle(key="a", claim="a", evidence="e", strength=80),
+        DifferentiationAngle(key="b", claim="b", evidence="e", strength=0),
+        DifferentiationAngle(key="c", claim="c", evidence="e", strength=60),
+    ]
+    report = _positioning(angles=angles)
+    # zero-strength angle dropped; avg of the two reals = 70
+    assert _positioning_score(report) == 70
+
+
+def test_positioning_score_clamps_to_zero_hundred():
+    """Average is rounded; the helper still clamps defensively."""
+    angles = [
+        DifferentiationAngle(key="a", claim="a", evidence="e", strength=100),
+        DifferentiationAngle(key="b", claim="b", evidence="e", strength=100),
+        DifferentiationAngle(key="c", claim="c", evidence="e", strength=100),
+    ]
+    report = _positioning(angles=angles)
+    assert _positioning_score(report) == 100

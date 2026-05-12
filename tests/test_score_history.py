@@ -515,3 +515,213 @@ def test_load_round_trip_via_disk(tmp_path: Path):
     assert len(reloaded["entries"]) == 1
     assert reloaded["entries"][0]["industrial_score"] == 77
     assert reloaded["entries"][0]["round_id"] == "r1"
+
+
+# ─── positioning_score tracking ────────────────────────────────────────
+
+
+def test_append_records_positioning_score_when_provided():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(
+        history, project, _qa(industrial_score=78), positioning_score=72
+    )
+
+    entry = history["entries"][0]
+    assert entry["positioning_score"] == 72
+    assert entry["positioning_delta"] is None
+
+
+def test_append_records_positioning_delta_against_previous_entry():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(
+        history, project, _qa(industrial_score=70), positioning_score=55
+    )
+    history = append_score_history(
+        history, project, _qa(industrial_score=82), positioning_score=80
+    )
+
+    assert history["entries"][-1]["positioning_score"] == 80
+    assert history["entries"][-1]["positioning_delta"] == 25
+
+
+def test_append_positioning_delta_skips_rounds_without_positioning():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(
+        history, project, _qa(industrial_score=70), positioning_score=55
+    )
+    # second round without positioning data
+    history = append_score_history(history, project, _qa(industrial_score=74))
+    # third round with positioning again — delta must compare to 55, not None
+    history = append_score_history(
+        history, project, _qa(industrial_score=80), positioning_score=70
+    )
+
+    assert history["entries"][-1]["positioning_score"] == 70
+    assert history["entries"][-1]["positioning_delta"] == 15
+    assert history["entries"][1]["positioning_score"] is None
+    assert history["entries"][1]["positioning_delta"] is None
+
+
+def test_append_positioning_score_is_optional_and_defaults_to_none():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(history, project, _qa(industrial_score=78))
+
+    entry = history["entries"][0]
+    assert entry["positioning_score"] is None
+    assert entry["positioning_delta"] is None
+
+
+def test_append_positioning_score_handles_invalid_input_gracefully():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=78),
+        positioning_score="not-a-number",  # type: ignore[arg-type]
+    )
+
+    assert history["entries"][0]["positioning_score"] is None
+    assert history["entries"][0]["positioning_delta"] is None
+
+
+def test_render_markdown_includes_positioning_column_when_any_entry_has_it():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        positioning_score=55,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=82),
+        positioning_score=80,
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "Positionierung" in rendered
+    assert "55/100" in rendered
+    assert "80/100 (+25)" in rendered
+
+
+def test_render_markdown_omits_positioning_column_when_no_entry_has_it():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(history, project, _qa(industrial_score=78))
+    history = append_score_history(history, project, _qa(industrial_score=82))
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "Positionierung" not in rendered.split("## Top-Fixes")[0]
+
+
+def test_render_markdown_positioning_column_uses_dash_for_missing_entries():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        positioning_score=55,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=75),
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "Positionierung" in rendered
+    rows = [line for line in rendered.split("\n") if line.startswith("| 2026-05-11")]
+    assert rows and " | - | " in rows[0]
+
+
+def test_render_markdown_renders_arc_and_positioning_columns_side_by_side():
+    """When both arc and positioning are available, both columns must appear."""
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        arc_score=60,
+        positioning_score=55,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=80),
+        arc_score=85,
+        positioning_score=80,
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    header = [line for line in rendered.split("\n") if line.startswith("| Datum")]
+    assert header and "Arc" in header[0] and "Positionierung" in header[0]
+
+
+def test_render_markdown_positioning_negative_delta_rendered_with_minus():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        positioning_score=80,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=72),
+        positioning_score=60,
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "60/100 (-20)" in rendered
+
+
+def test_render_markdown_positioning_zero_delta_rendered_as_plus_minus_zero():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        positioning_score=72,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=72),
+        positioning_score=72,
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "72/100 (±0)" in rendered

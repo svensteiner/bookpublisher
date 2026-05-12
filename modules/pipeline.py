@@ -518,6 +518,33 @@ def _top_positioning_payload(
     }
 
 
+POSITIONING_SCORE_TOP_N = 3
+
+
+def _positioning_score(positioning: PositioningReport | None) -> int | None:
+    """Aggregate score for the competitive-positioning report.
+
+    Returns the rounded average strength (0–100) of the top
+    ``POSITIONING_SCORE_TOP_N`` differentiation angles, skipping the
+    ``kein_signal`` fallback. Returns ``None`` when no real angle exists —
+    score_history then records "no positioning available" rather than a
+    misleading zero.
+    """
+
+    if positioning is None:
+        return None
+    angles = [
+        angle
+        for angle in (positioning.unique_angles or [])
+        if angle.key != "kein_signal" and angle.strength > 0
+    ]
+    if not angles:
+        return None
+    top = angles[:POSITIONING_SCORE_TOP_N]
+    average = sum(int(angle.strength) for angle in top) / len(top)
+    return max(0, min(100, round(average)))
+
+
 def _top_chapter_balance_payload(chapter_json: dict | None) -> dict | None:
     """Extract the single most extreme word-count outlier for beginner_summary.
 
@@ -824,6 +851,10 @@ class PublisherPipeline:
                         arc_score_value = int(raw_arc)
                     except (TypeError, ValueError):
                         arc_score_value = None
+            positioning = build_positioning_report(project)
+            top_positioning = _top_positioning_payload(positioning)
+            top_collision_risk = _top_collision_risk_payload(positioning)
+            positioning_score_value = _positioning_score(positioning)
             history_path = self.writer.project_dir(project.project_id) / "score_history.json"
             history = load_score_history(history_path, project.project_id)
             history = append_score_history(
@@ -833,13 +864,11 @@ class PublisherPipeline:
                 round_id=round_id,
                 mode=mode,
                 arc_score=arc_score_value,
+                positioning_score=positioning_score_value,
             )
             score_history_highlight = _score_history_payload(history)
             kdp_keywords = build_kdp_keywords(project)
             top_kdp_keywords = _top_kdp_keywords_payload(kdp_keywords)
-            positioning = build_positioning_report(project)
-            top_positioning = _top_positioning_payload(positioning)
-            top_collision_risk = _top_collision_risk_payload(positioning)
             persona_report = build_persona_report(project, chapter_titles=chapter_titles)
             top_persona = _top_persona_payload(persona_report)
             persona_match = build_persona_match_report(

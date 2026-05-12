@@ -40,6 +40,8 @@ class ScoreHistoryEntry:
     score_delta: int | None
     arc_score: int | None = None
     arc_delta: int | None = None
+    positioning_score: int | None = None
+    positioning_delta: int | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -54,6 +56,8 @@ class ScoreHistoryEntry:
             "score_delta": self.score_delta,
             "arc_score": self.arc_score,
             "arc_delta": self.arc_delta,
+            "positioning_score": self.positioning_score,
+            "positioning_delta": self.positioning_delta,
         }
 
 
@@ -144,15 +148,29 @@ def _coerce_optional_int(value: Any) -> int | None:
         return None
 
 
-def _previous_arc_score(previous_entries: list[dict[str, Any]]) -> int | None:
-    """Walk previous entries newest-first and return the last arc_score set."""
+def _previous_optional_field(
+    previous_entries: list[dict[str, Any]],
+    field_name: str,
+) -> int | None:
+    """Return the last set value of ``field_name`` across previous entries.
+
+    Walks newest-first and skips entries where the field is missing or
+    invalid. Used to compute deltas for optional per-round metrics (arc
+    score, positioning score, …) so the delta compares against the most
+    recent round that actually carried the metric, not against ``None``.
+    """
     for entry in reversed(previous_entries):
         if not isinstance(entry, dict):
             continue
-        candidate = _coerce_optional_int(entry.get("arc_score"))
+        candidate = _coerce_optional_int(entry.get(field_name))
         if candidate is not None:
             return candidate
     return None
+
+
+def _previous_arc_score(previous_entries: list[dict[str, Any]]) -> int | None:
+    """Walk previous entries newest-first and return the last arc_score set."""
+    return _previous_optional_field(previous_entries, "arc_score")
 
 
 def append_score_history(
@@ -163,6 +181,7 @@ def append_score_history(
     mode: str = "quick_qa",
     now: datetime | None = None,
     arc_score: int | None = None,
+    positioning_score: int | None = None,
 ) -> dict[str, Any]:
     """Return a new history dict with one entry appended.
 
@@ -171,6 +190,8 @@ def append_score_history(
     optional chapter-arc score (0–100) for the same round; when supplied the
     entry also records an ``arc_delta`` against the most recent prior entry
     that had an arc_score (skipping rounds that ran without arc analysis).
+    ``positioning_score`` follows the same pattern for the competitive
+    positioning report (average of top-3 differentiation-angle strengths).
     """
     timestamp = (now or datetime.now()).isoformat(timespec="seconds")
     previous_entries = list(history.get("entries") or [])
@@ -185,12 +206,20 @@ def append_score_history(
     )
 
     current_arc = _coerce_optional_int(arc_score)
-    previous_arc = _previous_arc_score(previous_entries)
+    previous_arc = _previous_optional_field(previous_entries, "arc_score")
     arc_delta: int | None
     if current_arc is None or previous_arc is None:
         arc_delta = None
     else:
         arc_delta = current_arc - previous_arc
+
+    current_pos = _coerce_optional_int(positioning_score)
+    previous_pos = _previous_optional_field(previous_entries, "positioning_score")
+    positioning_delta: int | None
+    if current_pos is None or previous_pos is None:
+        positioning_delta = None
+    else:
+        positioning_delta = current_pos - previous_pos
 
     entry = ScoreHistoryEntry(
         timestamp=timestamp,
@@ -204,6 +233,8 @@ def append_score_history(
         score_delta=score_delta,
         arc_score=current_arc,
         arc_delta=arc_delta,
+        positioning_score=current_pos,
+        positioning_delta=positioning_delta,
     )
 
     new_entries = previous_entries + [entry.to_json()]
@@ -218,6 +249,22 @@ def append_score_history(
         ),
         "entries": new_entries,
     }
+
+
+def _format_optional_score_cell(
+    score: int | None,
+    delta: int | None,
+) -> str:
+    """Render a per-round optional score (arc, positioning, …) for the table."""
+    if score is None:
+        return "-"
+    if delta is None:
+        return f"{score}/100"
+    if delta > 0:
+        return f"{score}/100 (+{delta})"
+    if delta == 0:
+        return f"{score}/100 (±0)"
+    return f"{score}/100 ({delta})"
 
 
 def _sparkline(scores: list[int]) -> str:
@@ -359,12 +406,19 @@ def render_score_history_markdown(
     has_arc = any(
         _coerce_optional_int(entry.get("arc_score")) is not None for entry in entries
     )
+    has_positioning = any(
+        _coerce_optional_int(entry.get("positioning_score")) is not None for entry in entries
+    )
+
+    header_cells = ["Datum", "Runde", "Modus", "Score", "Delta"]
     if has_arc:
-        lines.append("| Datum | Runde | Modus | Score | Delta | Arc | Decision |")
-        lines.append("|---|---|---|---|---|---|---|")
-    else:
-        lines.append("| Datum | Runde | Modus | Score | Delta | Decision |")
-        lines.append("|---|---|---|---|---|---|")
+        header_cells.append("Arc")
+    if has_positioning:
+        header_cells.append("Positionierung")
+    header_cells.append("Decision")
+    lines.append("| " + " | ".join(header_cells) + " |")
+    lines.append("|" + "---|" * len(header_cells))
+
     for entry in entries:
         ts = str(entry.get("timestamp", ""))
         round_id = entry.get("round_id") or "-"
@@ -373,26 +427,20 @@ def render_score_history_markdown(
         delta = entry.get("score_delta")
         delta_text = _format_delta(delta if delta is None else _coerce_int(delta))
         decision = str(entry.get("decision", "HOLD"))
+
+        row: list[str] = [ts, str(round_id), mode, f"{score}/100", delta_text]
         if has_arc:
-            arc = _coerce_optional_int(entry.get("arc_score"))
-            arc_delta = _coerce_optional_int(entry.get("arc_delta"))
-            if arc is None:
-                arc_text = "-"
-            elif arc_delta is None:
-                arc_text = f"{arc}/100"
-            elif arc_delta > 0:
-                arc_text = f"{arc}/100 (+{arc_delta})"
-            elif arc_delta == 0:
-                arc_text = f"{arc}/100 (±0)"
-            else:
-                arc_text = f"{arc}/100 ({arc_delta})"
-            lines.append(
-                f"| {ts} | {round_id} | {mode} | {score}/100 | {delta_text} | {arc_text} | {decision} |"
-            )
-        else:
-            lines.append(
-                f"| {ts} | {round_id} | {mode} | {score}/100 | {delta_text} | {decision} |"
-            )
+            row.append(_format_optional_score_cell(
+                _coerce_optional_int(entry.get("arc_score")),
+                _coerce_optional_int(entry.get("arc_delta")),
+            ))
+        if has_positioning:
+            row.append(_format_optional_score_cell(
+                _coerce_optional_int(entry.get("positioning_score")),
+                _coerce_optional_int(entry.get("positioning_delta")),
+            ))
+        row.append(decision)
+        lines.append("| " + " | ".join(row) + " |")
 
     gate_trends = build_gate_trends(entries)
     lines.extend(_render_gate_trend_section(gate_trends))
