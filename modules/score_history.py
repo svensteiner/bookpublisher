@@ -16,12 +16,14 @@ from pathlib import Path
 from typing import Any
 
 from modules.discovery import BookProject
+from modules.industrial import GATE_DISPLAY_LABELS, score_badge
 
 
 SCORE_HISTORY_VERSION = 1
 MAX_HISTORY_ENTRIES = 50
 TOP_FIX_COUNT = 3
 SPARK_WIDTH = 20
+GATE_TREND_MIN_POINTS = 2
 
 
 @dataclass(frozen=True)
@@ -193,6 +195,97 @@ def _format_delta(delta: int | None) -> str:
     return f"{delta:>3}"
 
 
+def build_gate_trends(
+    entries: list[dict[str, Any]],
+    *,
+    min_points: int = GATE_TREND_MIN_POINTS,
+) -> tuple[dict[str, Any], ...]:
+    """Return per-gate trend rows derived from score-history entries.
+
+    Pure-Python, deterministic, immutable. For every gate that appears in at
+    least ``min_points`` entries, the helper collects the score trajectory in
+    insertion order (oldest → newest) and computes:
+
+    - ``name``: technical gate key (e.g. ``asset_completeness``)
+    - ``label``: beginner-friendly German display label
+    - ``scores``: tuple of integer scores per round (chronological)
+    - ``first`` / ``last``: trajectory endpoints
+    - ``delta``: ``last - first`` (signed int)
+    - ``badge``: emoji for the latest score (unified score_badge scheme)
+
+    Gates that appear only once cannot show a trend and are skipped — the
+    feature exists to surface movement across rounds. The order of the
+    returned tuple mirrors first-occurrence order across entries so the
+    table stays stable across rounds.
+    """
+
+    if min_points < 2:
+        min_points = 2
+
+    order: list[str] = []
+    scores_by_gate: dict[str, list[int]] = {}
+
+    for entry in entries:
+        gates = entry.get("gates") if isinstance(entry, dict) else None
+        if not isinstance(gates, list):
+            continue
+        for gate in gates:
+            if not isinstance(gate, dict):
+                continue
+            name = str(gate.get("name", "")).strip()
+            if not name:
+                continue
+            if name not in scores_by_gate:
+                scores_by_gate[name] = []
+                order.append(name)
+            scores_by_gate[name].append(_coerce_int(gate.get("score")))
+
+    out: list[dict[str, Any]] = []
+    for name in order:
+        scores = scores_by_gate[name]
+        if len(scores) < min_points:
+            continue
+        first = scores[0]
+        last = scores[-1]
+        delta = last - first
+        badge, _status = score_badge(last)
+        out.append({
+            "name": name,
+            "label": GATE_DISPLAY_LABELS.get(name, name.replace("_", " ").title()),
+            "scores": tuple(scores),
+            "first": first,
+            "last": last,
+            "delta": delta,
+            "badge": badge,
+        })
+    return tuple(out)
+
+
+def _render_gate_trend_section(trends: tuple[dict[str, Any], ...]) -> list[str]:
+    """Return markdown lines for the per-gate trend section, or [] if empty."""
+
+    if not trends:
+        return []
+
+    lines: list[str] = ["", "## Gate-Verlauf", ""]
+    lines.append("| Gate | Verlauf | Delta | Status |")
+    lines.append("|---|---|---|---|")
+    for trend in trends:
+        scores = trend["scores"]
+        trajectory = " → ".join(f"{s}/100" for s in scores)
+        delta = int(trend["delta"])
+        if delta > 0:
+            delta_text = f"+{delta}"
+        elif delta == 0:
+            delta_text = "±0"
+        else:
+            delta_text = str(delta)
+        label = trend["label"]
+        badge = trend["badge"]
+        lines.append(f"| {label} | {trajectory} | {delta_text} | {badge} |")
+    return lines
+
+
 def render_score_history_markdown(
     project: BookProject,
     history: dict[str, Any],
@@ -229,6 +322,9 @@ def render_score_history_markdown(
         delta_text = _format_delta(delta if delta is None else _coerce_int(delta))
         decision = str(entry.get("decision", "HOLD"))
         lines.append(f"| {ts} | {round_id} | {mode} | {score}/100 | {delta_text} | {decision} |")
+
+    gate_trends = build_gate_trends(entries)
+    lines.extend(_render_gate_trend_section(gate_trends))
 
     latest = entries[-1]
     top = latest.get("top_fixes") or []

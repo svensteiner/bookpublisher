@@ -12,6 +12,7 @@ from modules.score_history import (
     SCORE_HISTORY_VERSION,
     TOP_FIX_COUNT,
     append_score_history,
+    build_gate_trends,
     load_score_history,
     render_score_history_markdown,
 )
@@ -216,6 +217,166 @@ def test_qa_with_missing_fields_does_not_crash():
     assert entry["gates"] == []
     assert entry["top_fixes"] == []
     assert entry["investor_grade"] is None
+
+
+def test_build_gate_trends_returns_empty_for_no_entries():
+    assert build_gate_trends([]) == ()
+
+
+def test_build_gate_trends_skips_single_point_gates():
+    entries = [
+        {
+            "gates": [
+                {"name": "asset_completeness", "score": 80},
+                {"name": "metadata_and_storefront", "score": 60},
+            ],
+        }
+    ]
+
+    trends = build_gate_trends(entries)
+
+    assert trends == ()
+
+
+def test_build_gate_trends_preserves_first_occurrence_order():
+    entries = [
+        {
+            "gates": [
+                {"name": "asset_completeness", "score": 60},
+                {"name": "metadata_and_storefront", "score": 70},
+            ],
+        },
+        {
+            "gates": [
+                {"name": "metadata_and_storefront", "score": 80},
+                {"name": "asset_completeness", "score": 90},
+            ],
+        },
+    ]
+
+    trends = build_gate_trends(entries)
+
+    assert [trend["name"] for trend in trends] == [
+        "asset_completeness",
+        "metadata_and_storefront",
+    ]
+
+
+def test_build_gate_trends_computes_endpoints_and_delta():
+    entries = [
+        {"gates": [{"name": "asset_completeness", "score": 60}]},
+        {"gates": [{"name": "asset_completeness", "score": 75}]},
+        {"gates": [{"name": "asset_completeness", "score": 90}]},
+    ]
+
+    trends = build_gate_trends(entries)
+
+    assert len(trends) == 1
+    asset = trends[0]
+    assert asset["first"] == 60
+    assert asset["last"] == 90
+    assert asset["delta"] == 30
+    assert asset["scores"] == (60, 75, 90)
+    assert asset["badge"] == "🟢"
+    assert asset["label"] == "Dateien vollständig"
+
+
+def test_build_gate_trends_negative_delta_uses_red_badge():
+    entries = [
+        {"gates": [{"name": "asset_completeness", "score": 80}]},
+        {"gates": [{"name": "asset_completeness", "score": 50}]},
+    ]
+
+    trends = build_gate_trends(entries)
+
+    assert trends[0]["delta"] == -30
+    assert trends[0]["badge"] == "🔴"
+
+
+def test_build_gate_trends_unknown_gate_falls_back_to_humanized_label():
+    entries = [
+        {"gates": [{"name": "custom_gate_xy", "score": 70}]},
+        {"gates": [{"name": "custom_gate_xy", "score": 80}]},
+    ]
+
+    trends = build_gate_trends(entries)
+
+    assert trends[0]["label"] == "Custom Gate Xy"
+
+
+def test_build_gate_trends_ignores_invalid_entries_and_gates():
+    entries: list[dict] = [
+        "not-a-dict",  # type: ignore[list-item]
+        {"gates": "not-a-list"},
+        {
+            "gates": [
+                "ignored",
+                {},
+                {"name": "", "score": 99},
+                {"name": "asset_completeness", "score": 60},
+            ]
+        },
+        {"gates": [{"name": "asset_completeness", "score": 70}]},
+    ]
+
+    trends = build_gate_trends(entries)
+
+    assert len(trends) == 1
+    assert trends[0]["name"] == "asset_completeness"
+    assert trends[0]["scores"] == (60, 70)
+
+
+def test_render_markdown_includes_gate_trend_section():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70, gates=[
+            {"name": "asset_completeness", "status": "REVIEW", "score": 60},
+            {"name": "metadata_and_storefront", "status": "REVIEW", "score": 70},
+        ]),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=85, gates=[
+            {"name": "asset_completeness", "status": "READY", "score": 90},
+            {"name": "metadata_and_storefront", "status": "REVIEW", "score": 70},
+        ]),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "## Gate-Verlauf" in rendered
+    assert "Dateien vollständig" in rendered
+    assert "Amazon-Metadaten" in rendered
+    assert "60/100 → 90/100" in rendered
+    assert "+30" in rendered
+    assert "±0" in rendered
+
+
+def test_render_markdown_skips_gate_trend_when_only_one_entry():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(history, project, _qa(industrial_score=78))
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "## Gate-Verlauf" not in rendered
+
+
+def test_build_gate_trends_min_points_clamps_to_two():
+    entries = [
+        {"gates": [{"name": "asset_completeness", "score": 60}]},
+        {"gates": [{"name": "asset_completeness", "score": 80}]},
+    ]
+
+    # min_points=1 would mean even single-entry gates qualify; we clamp to 2.
+    trends = build_gate_trends(entries, min_points=1)
+
+    assert len(trends) == 1
+    assert trends[0]["scores"] == (60, 80)
 
 
 def test_load_round_trip_via_disk(tmp_path: Path):
