@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from modules.discovery import BookProject
-from modules.industrial import GATE_DISPLAY_LABELS, score_badge
+from modules.industrial import GATE_DISPLAY_LABELS
+from modules.scoring import score_badge
 
 
 SCORE_HISTORY_VERSION = 1

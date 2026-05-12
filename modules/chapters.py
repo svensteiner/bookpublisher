@@ -14,6 +14,14 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from modules.scoring import (
+    SCORE_BADGE_FIX,
+    SCORE_BADGE_READY,
+    SCORE_BADGE_REVIEW,
+    SCORE_READY,
+    SCORE_REVIEW,
+)
+
 # Word-count balance thresholds. A chapter is flagged as a SPLIT candidate
 # when its word count exceeds the median by ``OVERSIZED_FACTOR`` and as a
 # MERGE candidate when it falls below the median by ``UNDERSIZED_FACTOR``.
@@ -23,17 +31,20 @@ OVERSIZED_FACTOR: float = 3.0
 UNDERSIZED_FACTOR: float = 0.3
 BALANCE_MIN_CHAPTERS: int = 3
 
+# Status → unified score-badge emoji mapping. Single source of truth in
+# modules.scoring so all reports stay in lockstep when the scheme changes.
+_STATUS_EMOJI: dict[str, str] = {
+    "READY": SCORE_BADGE_READY,
+    "REVIEW": SCORE_BADGE_REVIEW,
+    "FIX": SCORE_BADGE_FIX,
+}
+
 # Heading style markers used by Word in German + English templates.
 HEADING_STYLE_TOKENS: tuple[str, ...] = ("heading", "überschrift", "uberschrift")
 
 # Minimum body words for a real chapter — anything below is treated as a
 # section divider / front matter and merged into the previous chapter.
 MIN_CHAPTER_WORDS = 80
-
-# Score thresholds (kept identical to industrial.py for cross-report
-# consistency).
-SCORE_READY = 85
-SCORE_REVIEW = 65
 
 # Heuristic vocabularies tuned for German nonfiction. Kept small and
 # pattern-only — the LLM-driven fix lines live in modules/review.py.
@@ -502,7 +513,7 @@ def render_chapter_report_markdown(title: str, report: ChapterReport) -> str:
 
     lines.extend(["", "## Konkrete Fixes pro Kapitel", ""])
     for chap in report.chapters:
-        emoji = {"READY": "🟢", "REVIEW": "🟡", "FIX": "🔴"}.get(chap.status, "⚪")
+        emoji = _STATUS_EMOJI.get(chap.status, "⚪")
         lines.append(f"### {emoji} Kapitel {chap.index} — {chap.title}")
         lines.append("")
         lines.append(f"- Score: **{chap.overall}/100** ({chap.status})")

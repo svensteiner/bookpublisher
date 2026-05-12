@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from modules.chapters import Chapter
+from modules.scoring import SCORE_READY, SCORE_REVIEW
 from modules.discovery import BookProject
 
 
@@ -54,8 +55,6 @@ PHASE_EMOJI: dict[str, str] = {
     PHASE_TRANSFORMATION: "🚀",
 }
 
-SCORE_READY: int = 85
-SCORE_REVIEW: int = 65
 
 # Marker vocabularies. Patterns are intentionally narrow to keep
 # classification stable — broad words like "problem" alone are not

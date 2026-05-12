@@ -27,6 +27,13 @@ from typing import Any, Iterable
 
 from modules.chapters import _is_heading
 from modules.discovery import BookProject
+from modules.scoring import (
+    SCORE_BADGE_FIX,
+    SCORE_BADGE_READY,
+    SCORE_BADGE_REVIEW,
+    SCORE_READY,
+    SCORE_REVIEW,
+)
 
 # Amazon Kindle Sample is 10% by default. We accept slightly more so a
 # 9-chapter book whose chapter-1 ends at 11% still gets a clean section.
@@ -39,11 +46,6 @@ SAMPLE_MAX_RATIO: float = 0.14
 SECTION_TARGET_WORDS: int = 350
 MIN_SECTION_WORDS: int = 90
 MAX_SECTIONS: int = 8
-
-# Score thresholds shared with industrial.py / chapters.py for cross-
-# report consistency.
-SCORE_READY: int = 85
-SCORE_REVIEW: int = 65
 
 RISK_LABELS: dict[str, str] = {
     "READY": "WEITERLESEN",
@@ -520,7 +522,11 @@ def build_sample_scan_report(project: BookProject) -> SampleScanReport:
     return build_sample_scan_report_from_paragraphs(paragraphs)
 
 
-_STATUS_EMOJI: dict[str, str] = {"READY": "🟢", "REVIEW": "🟡", "FIX": "🔴"}
+_STATUS_EMOJI: dict[str, str] = {
+    "READY": SCORE_BADGE_READY,
+    "REVIEW": SCORE_BADGE_REVIEW,
+    "FIX": SCORE_BADGE_FIX,
+}
 
 
 def render_sample_scan_markdown(project: BookProject, report: SampleScanReport) -> str:

@@ -30,12 +30,15 @@ class Gate:
         }
 
 
-SCORE_READY_THRESHOLD: int = 85
-SCORE_REVIEW_THRESHOLD: int = 65
-
-SCORE_BADGE_READY: str = "🟢"
-SCORE_BADGE_REVIEW: str = "🟡"
-SCORE_BADGE_FIX: str = "🔴"
+from modules.scoring import (
+    SCORE_BADGE_FIX,
+    SCORE_BADGE_READY,
+    SCORE_BADGE_REVIEW,
+    SCORE_READY as SCORE_READY_THRESHOLD,
+    SCORE_REVIEW as SCORE_REVIEW_THRESHOLD,
+    score_badge,
+    status_for as _status,
+)
 
 # Beginner-friendly German labels per gate (technical key → display label).
 GATE_DISPLAY_LABELS: dict[str, str] = {
@@ -45,28 +48,6 @@ GATE_DISPLAY_LABELS: dict[str, str] = {
     "production_package": "Produktionspaket",
     "amazon_sellability": "Amazon-Verkaufbarkeit",
 }
-
-
-def score_badge(score: int, *, blocking: bool = False) -> tuple[str, str]:
-    """Return (emoji, status) for a 0-100 score under the unified scheme.
-
-    Status string mirrors the ``_status`` thresholds so the badge stays
-    consistent across all artifacts (beginner_summary, industrial_qa,
-    chapter_review, sample_scan).
-    """
-
-    if blocking:
-        return SCORE_BADGE_FIX, "FIX"
-    if score >= SCORE_READY_THRESHOLD:
-        return SCORE_BADGE_READY, "READY"
-    if score >= SCORE_REVIEW_THRESHOLD:
-        return SCORE_BADGE_REVIEW, "REVIEW"
-    return SCORE_BADGE_FIX, "FIX"
-
-
-def _status(score: int, blocking: bool = False) -> str:
-    _, status = score_badge(score, blocking=blocking)
-    return status
 
 
 def _word_count(text: str) -> int:
@@ -203,7 +184,7 @@ def _asset_gate(project: BookProject) -> Gate:
             if name in {"manuscript_docx", "cover_image", "title", "amazon_description"}:
                 blocking = True
 
-    return Gate("asset_completeness", _status(max(0, score), blocking), max(0, score), findings, fixes)
+    return Gate("asset_completeness", _status(max(0, score), blocking=blocking), max(0, score), findings, fixes)
 
 
 def _metadata_gate(project: BookProject, notes_text: str) -> Gate:
@@ -300,7 +281,7 @@ def _kindle_gate(profile: dict[str, Any]) -> Gate:
 
     if words == 0:
         blocking = True
-    return Gate("kindle_ebook_readiness", _status(max(0, score), blocking), max(0, score), findings, fixes)
+    return Gate("kindle_ebook_readiness", _status(max(0, score), blocking=blocking), max(0, score), findings, fixes)
 
 
 def _production_gate(project: BookProject, profile: dict[str, Any]) -> Gate:
@@ -344,7 +325,7 @@ def _production_gate(project: BookProject, profile: dict[str, Any]) -> Gate:
         score -= 5
         fixes.append("Keep a rendered customer PDF/proof outside upload-critical files for final visual QA.")
 
-    return Gate("production_package", _status(max(0, score), blocking), max(0, score), findings, fixes)
+    return Gate("production_package", _status(max(0, score), blocking=blocking), max(0, score), findings, fixes)
 
 
 def _sellability_gate(project: BookProject, profile: dict[str, Any], notes_text: str) -> Gate:
