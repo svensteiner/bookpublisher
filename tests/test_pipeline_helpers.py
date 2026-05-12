@@ -17,6 +17,7 @@ from modules.personas import BuyerPersona, PersonaReport
 from modules.persona_match import build_persona_match_report
 from modules.pipeline import (
     _amazon_html_preview_payload,
+    _balance_score,
     _persona_match_payload,
     _positioning_score,
     _round_delta_payload,
@@ -1521,3 +1522,84 @@ def test_positioning_score_clamps_to_zero_hundred():
     ]
     report = _positioning(angles=angles)
     assert _positioning_score(report) == 100
+
+
+# ─── _balance_score ────────────────────────────────────────────────────
+
+
+def test_balance_score_returns_none_when_no_chapter_json():
+    assert _balance_score(None) is None
+
+
+def test_balance_score_returns_none_when_no_chapters_listed():
+    assert _balance_score({"chapters": []}) is None
+
+
+def test_balance_score_returns_none_when_no_balance_data():
+    """No balance analysis ran → no metric to report."""
+    payload = {"chapters": [{"index": 1}, {"index": 2}, {"index": 3}]}
+    assert _balance_score(payload) is None
+
+
+def test_balance_score_perfect_when_no_outliers():
+    payload = {
+        "chapters": [{"index": i} for i in range(1, 11)],
+        "balance": {"oversized": [], "undersized": []},
+    }
+    assert _balance_score(payload) == 100
+
+
+def test_balance_score_drops_with_oversized_outliers():
+    payload = {
+        "chapters": [{"index": i} for i in range(1, 11)],
+        "balance": {
+            "oversized": [{"index": 1}, {"index": 2}],
+            "undersized": [],
+        },
+    }
+    # 8 of 10 in range → 80
+    assert _balance_score(payload) == 80
+
+
+def test_balance_score_counts_both_oversized_and_undersized():
+    payload = {
+        "chapters": [{"index": i} for i in range(1, 11)],
+        "balance": {
+            "oversized": [{"index": 1}],
+            "undersized": [{"index": 2}, {"index": 3}],
+        },
+    }
+    # 7 of 10 in range → 70
+    assert _balance_score(payload) == 70
+
+
+def test_balance_score_clamps_at_zero_for_inconsistent_data():
+    """Defensive: outliers > chapters shouldn't push the score negative."""
+    payload = {
+        "chapters": [{"index": 1}, {"index": 2}],
+        "balance": {
+            "oversized": [{"index": 1}, {"index": 2}, {"index": 3}],
+            "undersized": [],
+        },
+    }
+    assert _balance_score(payload) == 0
+
+
+def test_balance_score_rounds_to_nearest_integer():
+    payload = {
+        "chapters": [{"index": i} for i in range(1, 4)],  # 3 chapters
+        "balance": {
+            "oversized": [{"index": 1}],
+            "undersized": [],
+        },
+    }
+    # 2 of 3 in range = 66.66… → 67
+    assert _balance_score(payload) == 67
+
+
+def test_balance_score_ignores_non_dict_balance():
+    payload = {
+        "chapters": [{"index": 1}, {"index": 2}, {"index": 3}],
+        "balance": "not-a-dict",
+    }
+    assert _balance_score(payload) is None

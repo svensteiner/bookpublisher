@@ -598,6 +598,45 @@ def _top_chapter_balance_payload(chapter_json: dict | None) -> dict | None:
     }
 
 
+def _balance_score(chapter_json: dict | None) -> int | None:
+    """Compute the 0–100 chapter-balance score for score_history.
+
+    Definition: ``round(100 * (total - outliers) / total)`` where
+    ``outliers`` is the count of chapters flagged as oversized OR
+    undersized by ``analyze_chapter_balance``. A balanced book scores
+    100; a book where half the chapters drift far from the median
+    scores ~50.
+
+    Returns ``None`` when:
+
+    - no chapter data is available,
+    - the chapter list is empty,
+    - no balance analysis ran (e.g. below ``BALANCE_MIN_CHAPTERS``).
+
+    A ``None`` signals "no balance metric possible" so the score-
+    history table shows a dash instead of a misleading zero.
+    """
+
+    if not chapter_json:
+        return None
+    chapters = chapter_json.get("chapters") or []
+    if not chapters:
+        return None
+    balance = chapter_json.get("balance")
+    if not isinstance(balance, dict):
+        return None
+    total = len(chapters)
+    if total <= 0:
+        return None
+    oversized = balance.get("oversized") or []
+    undersized = balance.get("undersized") or []
+    outliers = len(oversized) + len(undersized)
+    # Clamp defensively: ratio above 1.0 shouldn't happen but bad data
+    # could push outliers > total — score caps at 0 in that case.
+    in_range = max(0, total - outliers)
+    return max(0, min(100, round(100 * in_range / total)))
+
+
 def _top_arc_payload(arc_json: dict | None) -> dict | None:
     """Extract the single biggest structural lever from a chapter_arc payload.
 
@@ -855,6 +894,7 @@ class PublisherPipeline:
             top_positioning = _top_positioning_payload(positioning)
             top_collision_risk = _top_collision_risk_payload(positioning)
             positioning_score_value = _positioning_score(positioning)
+            balance_score_value = _balance_score(chapter_json)
             history_path = self.writer.project_dir(project.project_id) / "score_history.json"
             history = load_score_history(history_path, project.project_id)
             history = append_score_history(
@@ -865,6 +905,7 @@ class PublisherPipeline:
                 mode=mode,
                 arc_score=arc_score_value,
                 positioning_score=positioning_score_value,
+                balance_score=balance_score_value,
             )
             score_history_highlight = _score_history_payload(history)
             kdp_keywords = build_kdp_keywords(project)

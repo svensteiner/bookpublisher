@@ -725,3 +725,169 @@ def test_render_markdown_positioning_zero_delta_rendered_as_plus_minus_zero():
     rendered = render_score_history_markdown(project, history)
 
     assert "72/100 (±0)" in rendered
+
+
+# ─── balance_score tracking ────────────────────────────────────────────
+
+
+def test_append_records_balance_score_when_provided():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(
+        history, project, _qa(industrial_score=78), balance_score=85
+    )
+
+    entry = history["entries"][0]
+    assert entry["balance_score"] == 85
+    assert entry["balance_delta"] is None
+
+
+def test_append_records_balance_delta_against_previous_entry():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history, project, _qa(industrial_score=70), balance_score=60
+    )
+
+    history = append_score_history(
+        history, project, _qa(industrial_score=82), balance_score=85
+    )
+
+    assert history["entries"][-1]["balance_score"] == 85
+    assert history["entries"][-1]["balance_delta"] == 25
+
+
+def test_append_balance_delta_skips_rounds_without_balance():
+    """A round without balance_score must not break the next delta."""
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history, project, _qa(industrial_score=70), balance_score=60
+    )
+    # middle round runs without balance data
+    history = append_score_history(history, project, _qa(industrial_score=72))
+    history = append_score_history(
+        history, project, _qa(industrial_score=80), balance_score=78
+    )
+
+    assert history["entries"][-1]["balance_score"] == 78
+    # delta compares against the most recent prior balance score (60)
+    assert history["entries"][-1]["balance_delta"] == 18
+    assert history["entries"][1]["balance_score"] is None
+    assert history["entries"][1]["balance_delta"] is None
+
+
+def test_append_balance_score_optional_defaults_to_none():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(history, project, _qa(industrial_score=78))
+
+    entry = history["entries"][0]
+    assert entry["balance_score"] is None
+    assert entry["balance_delta"] is None
+
+
+def test_append_balance_score_invalid_input_becomes_none():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(
+        history, project, _qa(industrial_score=78), balance_score="not-a-number"  # type: ignore[arg-type]
+    )
+
+    assert history["entries"][0]["balance_score"] is None
+
+
+def test_render_markdown_includes_balance_column_when_any_entry_has_balance():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        balance_score=60,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=82),
+        balance_score=90,
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    header = [line for line in rendered.split("\n") if line.startswith("| Datum")]
+    assert header and "Balance" in header[0]
+    assert "60/100" in rendered
+    assert "90/100 (+30)" in rendered
+
+
+def test_render_markdown_omits_balance_column_when_no_entry_has_balance():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(history, project, _qa(industrial_score=78))
+    history = append_score_history(history, project, _qa(industrial_score=82))
+
+    rendered = render_score_history_markdown(project, history)
+
+    header = [line for line in rendered.split("\n") if line.startswith("| Datum")]
+    assert header and "Balance" not in header[0]
+
+
+def test_render_markdown_balance_column_uses_dash_for_missing_entries():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        balance_score=60,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=75),
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    header = [line for line in rendered.split("\n") if line.startswith("| Datum")]
+    assert header and "Balance" in header[0]
+    rows = [line for line in rendered.split("\n") if line.startswith("| 2026-05-11")]
+    assert rows and " | - | " in rows[0]
+
+
+def test_render_markdown_arc_positioning_balance_columns_all_present():
+    """When all three optional scores are populated, all columns appear."""
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        arc_score=60,
+        positioning_score=55,
+        balance_score=70,
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=80),
+        arc_score=85,
+        positioning_score=80,
+        balance_score=95,
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    header = [line for line in rendered.split("\n") if line.startswith("| Datum")]
+    assert header
+    assert "Arc" in header[0]
+    assert "Positionierung" in header[0]
+    assert "Balance" in header[0]
