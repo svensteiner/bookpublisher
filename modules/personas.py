@@ -71,6 +71,7 @@ class BuyerPersona:
     problem: str
     buying_motive: str
     anchor_quote: str
+    channels: tuple[str, ...] = field(default_factory=tuple)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -80,6 +81,7 @@ class BuyerPersona:
             "problem": self.problem,
             "buying_motive": self.buying_motive,
             "anchor_quote": self.anchor_quote,
+            "channels": list(self.channels),
         }
 
 
@@ -392,6 +394,74 @@ def _normalize_audience(audience: str) -> str:
     return cleaned or "Praktiker"
 
 
+# Default marketing channels per niche. Used as a baseline when the
+# persona-job text doesn't carry a stronger role-specific signal.
+MAX_CHANNELS: int = 3
+_NICHE_DEFAULT_CHANNELS: dict[str, tuple[str, ...]] = {
+    "ki_und_ai": ("LinkedIn (KI-Communities)", "X / Twitter (AI-Bubble)", "Fachblog-Gastposts"),
+    "finanzen_und_cfo": ("LinkedIn (CFO/Controller-Gruppen)", "XING (DACH-B2B)", "Finance-Newsletter"),
+    "vertrieb_und_marketing": ("LinkedIn (Sales-Navigator)", "XING (DACH-B2B)", "Sales-Podcasts"),
+    "produktivitaet": ("LinkedIn", "Newsletter-Cross-Promotion", "Produktivitaets-Podcasts"),
+    "fuehrung": ("LinkedIn (Leadership-Communities)", "Newsletter-Empfehlungen", "Executive-Podcasts"),
+    "selbststaendigkeit": ("LinkedIn", "X / Twitter (Solo-Business)", "Solopreneur-Newsletter"),
+    "immobilien": ("YouTube (Immobilien-Kanäle)", "Instagram (Immobilien-Influencer)", "Facebook-Gruppen"),
+    "mindset": ("Instagram", "YouTube", "Podcast-Interviews"),
+    "allgemeines_sachbuch": ("Amazon-Anzeigen", "LinkedIn", "Themen-Newsletter"),
+}
+
+# Job-keyword → primary-channel override. The first hit wins; further hits
+# fall through to the niche default. Keys are ascii-folded lowercase.
+# Order matters: more-specific solo/sales roles must be checked BEFORE the
+# generic "inhaber"/"geschaeftsfuehr" override, otherwise "Agentur-Inhaber"
+# would hit the executive override before the solo override.
+_JOB_CHANNEL_OVERRIDES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("cfo", "controller", "controlling", "kaufmaennisch", "kaufmännisch"), "LinkedIn (CFO/Controller-Gruppen)"),
+    (("vertriebsleiter", "head of sales", "sales-leiter"), "LinkedIn (Sales-Navigator)"),
+    (("solopreneur", "freelanc", "agentur", "trainer", "berater"), "LinkedIn + X (Solo-Business)"),
+    (("geschaeftsfuehr", "geschäftsführ", "inhaber", "ceo"), "LinkedIn (DACH-B2B-Decision-Maker)"),
+    (("projektleiter", "praktiker", "fachkraft", "senior-sachbearbeiter"), "LinkedIn (Branchen-Gruppen)"),
+)
+
+
+def _suggest_channels(
+    job: str,
+    niche_key: str,
+    flags: list[str],
+) -> tuple[str, ...]:
+    """Return up to ``MAX_CHANNELS`` marketing channels for a persona.
+
+    Deterministic. First applies the job-keyword override (one primary
+    channel for the persona's role), then fills with niche-default
+    channels, then dedupes while preserving order. Signal flags add
+    secondary channels: ``b2b`` ⇒ XING, ``einsteiger`` ⇒ Reddit, etc.
+    Returns an empty tuple only when neither the job nor the niche
+    yield any channel — which currently cannot happen because every
+    niche has at least one default — but the helper stays defensive.
+    """
+
+    job_folded = _ascii_fold(job or "")
+    picks: list[str] = []
+
+    for keywords, channel in _JOB_CHANNEL_OVERRIDES:
+        if any(keyword in job_folded for keyword in keywords):
+            picks.append(channel)
+            break
+
+    # Flag-driven channels come before niche defaults so a flagged signal
+    # (B2B, beginner) still surfaces even when niche defaults already fill
+    # the MAX_CHANNELS cap.
+    if "b2b" in flags and "XING (DACH-B2B)" not in picks:
+        picks.append("XING (DACH-B2B)")
+    if "einsteiger" in flags and "Reddit (Themen-Subreddits)" not in picks:
+        picks.append("Reddit (Themen-Subreddits)")
+
+    for channel in _NICHE_DEFAULT_CHANNELS.get(niche_key, _NICHE_DEFAULT_CHANNELS["allgemeines_sachbuch"]):
+        if channel not in picks:
+            picks.append(channel)
+
+    return tuple(picks[:MAX_CHANNELS])
+
+
 def _toc_anchors(chapter_titles: Iterable[str] | None) -> list[str]:
     """Lower-cased, deduplicated significant words from chapter titles."""
 
@@ -443,6 +513,7 @@ def build_persona_report(
         problem = _refine_problem(base_problem, combined_anchors, flags)
         motive = _refine_motive(base_motive, subject, flags)
         quote = _format_anchor_quote(audience, subject, combined_anchors)
+        channels = _suggest_channels(job, niche_key, flags)
         personas.append(
             BuyerPersona(
                 label=label,
@@ -451,6 +522,7 @@ def build_persona_report(
                 problem=problem,
                 buying_motive=motive,
                 anchor_quote=quote,
+                channels=channels,
             )
         )
 
@@ -496,8 +568,12 @@ def render_persona_report_markdown(project: BookProject, report: PersonaReport) 
             f"- **Problem:** {persona.problem}",
             f"- **Kaufmotiv:** {persona.buying_motive}",
             f"- **Mögliche Suchanfrage:** _{persona.anchor_quote}_",
-            "",
         ])
+        if persona.channels:
+            lines.append(
+                f"- **Marketing-Kanäle:** {', '.join(persona.channels)}"
+            )
+        lines.append("")
 
     if report.signal_flags:
         lines.extend([

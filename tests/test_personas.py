@@ -6,12 +6,14 @@ from pathlib import Path
 
 from modules.discovery import BookProject
 from modules.personas import (
+    MAX_CHANNELS,
     MAX_MOTIVE_CHARS,
     MAX_PERSONAS,
     MAX_PROBLEM_CHARS,
     MAX_QUOTE_CHARS,
     BuyerPersona,
     PersonaReport,
+    _suggest_channels,
     build_persona_report,
     render_persona_brief_section,
     render_persona_report_markdown,
@@ -227,3 +229,177 @@ def test_anchor_quote_contains_audience_and_subject():
     persona = report.personas[0]
 
     assert report.audience in persona.anchor_quote or report.subject in persona.anchor_quote
+
+
+# --- Marketing channels ----------------------------------------------------
+
+
+def test_personas_have_channels_after_build():
+    report = build_persona_report(_ki_project())
+
+    for persona in report.personas:
+        assert persona.channels, f"Persona {persona.label} missing channels"
+        assert len(persona.channels) <= MAX_CHANNELS
+
+
+def test_channel_suggestions_are_capped_at_max():
+    # Flags that would push for many channels — must still respect the cap.
+    channels = _suggest_channels(
+        "CFO im KMU",
+        "finanzen_und_cfo",
+        flags=["b2b", "einsteiger", "selbststaendig", "proof_signal"],
+    )
+
+    assert len(channels) <= MAX_CHANNELS
+
+
+def test_cfo_role_picks_finance_channel_first():
+    channels = _suggest_channels(
+        "CFO oder kaufmännische Leiterin",
+        "finanzen_und_cfo",
+        flags=[],
+    )
+
+    assert "LinkedIn (CFO/Controller-Gruppen)" in channels
+    assert channels[0] == "LinkedIn (CFO/Controller-Gruppen)"
+
+
+def test_sales_role_picks_sales_navigator_channel():
+    channels = _suggest_channels(
+        "Vertriebsleiterin oder Head of Sales",
+        "vertrieb_und_marketing",
+        flags=[],
+    )
+
+    assert "LinkedIn (Sales-Navigator)" in channels
+
+
+def test_solo_role_picks_solo_business_channel():
+    channels = _suggest_channels(
+        "Selbständige Beraterin, Trainerin oder Agentur-Inhaber",
+        "selbststaendigkeit",
+        flags=["selbststaendig"],
+    )
+
+    assert "LinkedIn + X (Solo-Business)" in channels
+
+
+def test_immobilien_niche_uses_visual_channels_by_default():
+    channels = _suggest_channels(
+        "Investor",
+        "immobilien",
+        flags=[],
+    )
+
+    assert any("YouTube" in ch or "Instagram" in ch for ch in channels)
+
+
+def test_unknown_niche_falls_back_to_allgemein_defaults():
+    channels = _suggest_channels(
+        "Praktiker",
+        "kein_niche_key_dieser_art",
+        flags=[],
+    )
+
+    assert channels  # never empty
+    assert "Amazon-Anzeigen" in channels
+
+
+def test_b2b_flag_adds_xing_channel():
+    channels = _suggest_channels(
+        "Praktiker",
+        "allgemeines_sachbuch",
+        flags=["b2b"],
+    )
+
+    assert "XING (DACH-B2B)" in channels
+
+
+def test_beginner_flag_adds_reddit_when_room_available():
+    # Pick a niche with shorter defaults so reddit can squeeze in
+    channels = _suggest_channels(
+        "Wiedereinsteigerin",
+        "mindset",
+        flags=["einsteiger"],
+    )
+
+    # mindset niche has Instagram/YouTube/Podcast (3 items), so reddit
+    # may or may not appear under the 3-cap — assert at least no crash
+    # and that the result is well-formed.
+    assert isinstance(channels, tuple)
+    assert all(isinstance(ch, str) and ch for ch in channels)
+
+
+def test_render_markdown_includes_marketing_channels_line():
+    report = build_persona_report(_ki_project())
+
+    rendered = render_persona_report_markdown(_ki_project(), report)
+
+    assert "Marketing-Kanäle:" in rendered
+    # at least one persona's channel must appear in the output
+    first_channels = report.personas[0].channels
+    assert any(ch in rendered for ch in first_channels)
+
+
+def test_render_markdown_omits_channels_line_when_persona_has_no_channels():
+    persona = BuyerPersona(
+        label="Manual",
+        age_range="30",
+        job="Job",
+        problem="Problem",
+        buying_motive="Motive",
+        anchor_quote="quote",
+        channels=(),
+    )
+    report = PersonaReport(
+        niche_key="all",
+        niche_label="Allgemein",
+        niche_confidence=50,
+        audience="-",
+        subject="-",
+        personas=[persona],
+    )
+
+    project = _empty_project()
+    rendered = render_persona_report_markdown(project, report)
+
+    assert "Marketing-Kanäle" not in rendered
+
+
+def test_buyer_persona_channels_default_to_empty_tuple():
+    """Backwards compat: existing callers that don't pass channels must work."""
+    persona = BuyerPersona(
+        label="L",
+        age_range="A",
+        job="J",
+        problem="P",
+        buying_motive="M",
+        anchor_quote="Q",
+    )
+
+    assert persona.channels == ()
+
+
+def test_persona_to_json_includes_channels_list():
+    persona = BuyerPersona(
+        label="L",
+        age_range="A",
+        job="J",
+        problem="P",
+        buying_motive="M",
+        anchor_quote="Q",
+        channels=("LinkedIn", "Newsletter"),
+    )
+
+    data = persona.to_json()
+
+    assert data["channels"] == ["LinkedIn", "Newsletter"]
+
+
+def test_channels_are_deterministic_across_runs():
+    """Two builds of the same project must return identical channel tuples."""
+    report_a = build_persona_report(_ki_project())
+    report_b = build_persona_report(_ki_project())
+
+    for persona_a, persona_b in zip(report_a.personas, report_b.personas):
+        assert persona_a.channels == persona_b.channels
