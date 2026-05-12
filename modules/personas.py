@@ -462,6 +462,156 @@ def _suggest_channels(
     return tuple(picks[:MAX_CHANNELS])
 
 
+# --- Manual persona overrides ----------------------------------------------
+
+
+# Section header that holds author-declared personas. Match singular and
+# plural forms ("## Persona" / "## Personas") case-insensitive.
+_PERSONA_SECTION_HEADER_RE = re.compile(
+    r"^##\s+(?:personas?|buyer[\s-]+personas?)\b.*$",
+    flags=re.I,
+)
+# Subheader inside the section — e.g. "### Persona 1: Label" or "### Label".
+_PERSONA_BLOCK_HEADER_RE = re.compile(r"^###\s+(.+?)\s*$")
+# One field line inside a persona block — "- Field: value" or "Field: value".
+_PERSONA_FIELD_LINE_RE = re.compile(
+    r"^[\-\*\s>]*([\wäöüß\s/]+?)\s*[:=]\s*(.+?)\s*$",
+    flags=re.I,
+)
+_NEXT_PERSONA_SECTION_RE = re.compile(r"^##\s+", flags=re.I)
+
+# Field-name aliases (ascii-folded lowercase keys) → canonical
+# ``BuyerPersona`` field name.
+_PERSONA_FIELD_ALIASES: dict[str, str] = {
+    "alter": "age_range",
+    "altersband": "age_range",
+    "age": "age_range",
+    "age range": "age_range",
+    "job": "job",
+    "rolle": "job",
+    "role": "job",
+    "beruf": "job",
+    "job/rolle": "job",
+    "job / rolle": "job",
+    "problem": "problem",
+    "pain": "problem",
+    "schmerz": "problem",
+    "kaufmotiv": "buying_motive",
+    "motiv": "buying_motive",
+    "motive": "buying_motive",
+    "buying motive": "buying_motive",
+    "buying_motive": "buying_motive",
+    "suchanfrage": "anchor_quote",
+    "suche": "anchor_quote",
+    "anchor": "anchor_quote",
+    "anchor_quote": "anchor_quote",
+    "query": "anchor_quote",
+    "search": "anchor_quote",
+    "moegliche suchanfrage": "anchor_quote",
+    "mögliche suchanfrage": "anchor_quote",
+}
+
+
+def _normalize_field_key(raw: str) -> str | None:
+    cleaned = raw.strip().lower()
+    cleaned = (
+        cleaned.replace("ä", "ae").replace("ö", "oe")
+        .replace("ü", "ue").replace("ß", "ss")
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -*\t")
+    return _PERSONA_FIELD_ALIASES.get(cleaned)
+
+
+def _parse_persona_block_label(header_text: str) -> str:
+    """Strip leading 'Persona N: ' / 'Persona N - ' from the subheader."""
+
+    cleaned = header_text.strip()
+    # Match patterns like "Persona 1", "Persona 1:", "Persona 1 - " and
+    # remove the leading numbered label so what remains is the author's
+    # actual persona name.
+    match = re.match(
+        r"^persona\s*\d+\s*[:\-–]?\s*(.*)$",
+        cleaned,
+        flags=re.I,
+    )
+    if match and match.group(1):
+        return match.group(1).strip()
+    return cleaned
+
+
+def extract_persona_overrides(project: BookProject) -> list[dict[str, str]]:
+    """Return author-declared persona overrides from project metadata.
+
+    Reads every ``.md`` / ``.txt`` file in
+    ``project.metadata_files + project.notes_files`` and scrapes a
+    ``## Personas`` section. Each persona is a subblock starting with
+    ``### Persona N: <label>`` (or just ``### <label>``) followed by
+    field lines like ``- Alter: 30-45``, ``Job: CFO``, ``Problem: …``,
+    ``Kaufmotiv: …``, ``Suchanfrage: …``.
+
+    The parser is forgiving: unknown field keys are silently ignored
+    (author may add their own notes inside the block), missing fields
+    fall back to defaults at build time (see ``build_persona_report``),
+    and personas without a usable label/job/problem are skipped.
+
+    Returns at most ``MAX_PERSONAS`` overrides. Empty list when no
+    override section exists — overrides only kick in when the author
+    explicitly declares them.
+    """
+
+    sources: list[Any] = list(getattr(project, "metadata_files", []) or [])
+    sources.extend(getattr(project, "notes_files", []) or [])
+    overrides: list[dict[str, str]] = []
+    for path in sources:
+        try:
+            if not path.exists() or path.suffix.lower() not in {".md", ".txt"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = text.splitlines()
+        idx = 0
+        while idx < len(lines):
+            line = lines[idx].rstrip()
+            if _PERSONA_SECTION_HEADER_RE.match(line):
+                idx += 1
+                current: dict[str, str] | None = None
+                while idx < len(lines):
+                    body = lines[idx].rstrip()
+                    if _NEXT_PERSONA_SECTION_RE.match(body) and not _PERSONA_SECTION_HEADER_RE.match(body):
+                        break
+                    block_match = _PERSONA_BLOCK_HEADER_RE.match(body)
+                    if block_match:
+                        if current is not None:
+                            overrides.append(current)
+                        label = _parse_persona_block_label(block_match.group(1))
+                        current = {"label": label} if label else {}
+                        idx += 1
+                        continue
+                    if current is None:
+                        idx += 1
+                        continue
+                    field_match = _PERSONA_FIELD_LINE_RE.match(body)
+                    if field_match:
+                        key = _normalize_field_key(field_match.group(1))
+                        if key:
+                            value = field_match.group(2).strip(" \t-_*'\"")
+                            if value and key not in current:
+                                current[key] = value
+                    idx += 1
+                if current is not None:
+                    overrides.append(current)
+                continue
+            idx += 1
+    # Drop personas that carry nothing actionable; cap at MAX_PERSONAS.
+    actionable = [
+        persona
+        for persona in overrides
+        if persona.get("label") or persona.get("problem") or persona.get("job")
+    ]
+    return actionable[:MAX_PERSONAS]
+
+
 def _toc_anchors(chapter_titles: Iterable[str] | None) -> list[str]:
     """Lower-cased, deduplicated significant words from chapter titles."""
 
@@ -508,23 +658,58 @@ def build_persona_report(
             break
 
     specs = _NICHE_PERSONAS.get(niche_key) or _NICHE_PERSONAS["allgemeines_sachbuch"]
+    overrides = extract_persona_overrides(project)
     personas: list[BuyerPersona] = []
-    for label, age, job, base_problem, base_motive in specs[:MAX_PERSONAS]:
-        problem = _refine_problem(base_problem, combined_anchors, flags)
-        motive = _refine_motive(base_motive, subject, flags)
-        quote = _format_anchor_quote(audience, subject, combined_anchors)
-        channels = _suggest_channels(job, niche_key, flags)
-        personas.append(
-            BuyerPersona(
-                label=label,
-                age_range=age,
-                job=job,
-                problem=problem,
-                buying_motive=motive,
-                anchor_quote=quote,
-                channels=channels,
+    if overrides:
+        flags = flags + ["persona_override"]
+        # Author-supplied overrides replace the niche baseline entirely.
+        # Each override may carry only a subset of fields; missing fields
+        # fall back to (a) the matching baseline persona by position,
+        # then (b) safe defaults so the report stays renderable.
+        for idx, override in enumerate(overrides[:MAX_PERSONAS]):
+            baseline = specs[idx] if idx < len(specs) else specs[0]
+            base_label, base_age, base_job, base_problem, base_motive = baseline
+            label = override.get("label") or base_label
+            age = override.get("age_range") or base_age
+            job = override.get("job") or base_job
+            problem_text = override.get("problem") or _refine_problem(
+                base_problem, combined_anchors, flags
             )
-        )
+            motive_text = override.get("buying_motive") or _refine_motive(
+                base_motive, subject, flags
+            )
+            quote = override.get("anchor_quote") or _format_anchor_quote(
+                audience, subject, combined_anchors
+            )
+            channels = _suggest_channels(job, niche_key, flags)
+            personas.append(
+                BuyerPersona(
+                    label=label[:MAX_QUOTE_CHARS],
+                    age_range=age,
+                    job=job,
+                    problem=problem_text[:MAX_PROBLEM_CHARS],
+                    buying_motive=motive_text[:MAX_MOTIVE_CHARS],
+                    anchor_quote=quote[:MAX_QUOTE_CHARS],
+                    channels=channels,
+                )
+            )
+    else:
+        for label, age, job, base_problem, base_motive in specs[:MAX_PERSONAS]:
+            problem = _refine_problem(base_problem, combined_anchors, flags)
+            motive = _refine_motive(base_motive, subject, flags)
+            quote = _format_anchor_quote(audience, subject, combined_anchors)
+            channels = _suggest_channels(job, niche_key, flags)
+            personas.append(
+                BuyerPersona(
+                    label=label,
+                    age_range=age,
+                    job=job,
+                    problem=problem,
+                    buying_motive=motive,
+                    anchor_quote=quote,
+                    channels=channels,
+                )
+            )
 
     return PersonaReport(
         niche_key=niche_key,

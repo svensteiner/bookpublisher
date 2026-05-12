@@ -15,6 +15,7 @@ from modules.personas import (
     PersonaReport,
     _suggest_channels,
     build_persona_report,
+    extract_persona_overrides,
     render_persona_brief_section,
     render_persona_report_markdown,
 )
@@ -403,3 +404,212 @@ def test_channels_are_deterministic_across_runs():
 
     for persona_a, persona_b in zip(report_a.personas, report_b.personas):
         assert persona_a.channels == persona_b.channels
+
+
+# --- Manual persona overrides --------------------------------------------
+
+
+def _project_with_metadata(tmp_path: Path, body: str) -> BookProject:
+    meta = tmp_path / "metadata.md"
+    meta.write_text(body, encoding="utf-8")
+    return BookProject(
+        project_id="overridebook",
+        root=tmp_path,
+        title="KI im Mittelstand",
+        subtitle="Praxis statt Hype",
+        amazon_description=(
+            "Aus 10 Jahren operativer Praxis: konkrete Methoden mit Zahlen."
+        ),
+        metadata_files=[meta],
+        notes_files=[],
+    )
+
+
+def test_extract_persona_overrides_returns_empty_when_no_section(tmp_path: Path):
+    project = _project_with_metadata(tmp_path, "# Buch\n\nNur Text, keine Personas.\n")
+
+    assert extract_persona_overrides(project) == []
+
+
+def test_extract_persona_overrides_parses_full_block(tmp_path: Path):
+    body = (
+        "## Personas\n\n"
+        "### Persona 1: Der Spezialist\n"
+        "- Alter: 35-45\n"
+        "- Job: Senior-Engineer in einem Mittelstandsbetrieb\n"
+        "- Problem: KI-Tools bringen ihn nicht weiter\n"
+        "- Kaufmotiv: Sucht eine pragmatische Anleitung\n"
+        "- Suchanfrage: ki mittelstand operator\n"
+        "\n"
+        "### Persona 2: Die CFO\n"
+        "- Alter: 42-58\n"
+        "- Job: CFO im KMU\n"
+        "- Problem: Keine belastbaren KI-Zahlen\n"
+        "- Kaufmotiv: Will Zahlen statt Hype\n"
+    )
+    project = _project_with_metadata(tmp_path, body)
+
+    overrides = extract_persona_overrides(project)
+
+    assert len(overrides) == 2
+    assert overrides[0]["label"] == "Der Spezialist"
+    assert overrides[0]["age_range"] == "35-45"
+    assert "Senior-Engineer" in overrides[0]["job"]
+    assert "KI-Tools" in overrides[0]["problem"]
+    assert "pragmatische Anleitung" in overrides[0]["buying_motive"]
+    assert overrides[0]["anchor_quote"] == "ki mittelstand operator"
+    assert overrides[1]["label"] == "Die CFO"
+    assert overrides[1]["job"] == "CFO im KMU"
+
+
+def test_extract_persona_overrides_accepts_field_aliases(tmp_path: Path):
+    body = (
+        "## Personas\n\n"
+        "### Persona 1: X\n"
+        "- Age: 30\n"
+        "- Rolle: Tester\n"
+        "- Pain: Etwas tut weh\n"
+        "- Motive: Will Lösung\n"
+        "- Query: test query\n"
+    )
+    project = _project_with_metadata(tmp_path, body)
+
+    overrides = extract_persona_overrides(project)
+    persona = overrides[0]
+
+    assert persona["age_range"] == "30"
+    assert persona["job"] == "Tester"
+    assert persona["problem"] == "Etwas tut weh"
+    assert persona["buying_motive"] == "Will Lösung"
+    assert persona["anchor_quote"] == "test query"
+
+
+def test_extract_persona_overrides_caps_at_max_personas(tmp_path: Path):
+    body = "## Personas\n\n"
+    for i in range(1, MAX_PERSONAS + 3):
+        body += f"### Persona {i}: Label {i}\n- Problem: P{i}\n\n"
+    project = _project_with_metadata(tmp_path, body)
+
+    assert len(extract_persona_overrides(project)) == MAX_PERSONAS
+
+
+def test_extract_persona_overrides_skips_unrecognized_fields(tmp_path: Path):
+    body = (
+        "## Personas\n\n"
+        "### Persona 1: X\n"
+        "- Lieblingsfarbe: blau\n"
+        "- Problem: P\n"
+        "- Tageshoroskop: aufwachen\n"
+    )
+    project = _project_with_metadata(tmp_path, body)
+
+    persona = extract_persona_overrides(project)[0]
+
+    assert "Lieblingsfarbe" not in persona
+    assert persona["problem"] == "P"
+
+
+def test_extract_persona_overrides_drops_block_without_actionable_field(tmp_path: Path):
+    """A block with no label, job or problem is silently dropped."""
+    body = (
+        "## Personas\n\n"
+        "### \n"
+        "- Alter: 30\n"
+        "\n"
+        "### Persona 2: Real\n"
+        "- Problem: Hat ein Problem\n"
+    )
+    project = _project_with_metadata(tmp_path, body)
+
+    overrides = extract_persona_overrides(project)
+    assert len(overrides) == 1
+    assert overrides[0].get("problem") == "Hat ein Problem"
+
+
+def test_build_persona_report_uses_overrides_when_present(tmp_path: Path):
+    body = (
+        "## Personas\n\n"
+        "### Persona 1: Der Spezialist\n"
+        "- Alter: 35-45\n"
+        "- Job: Senior-Engineer\n"
+        "- Problem: KI-Tools bringen ihn nicht weiter\n"
+        "- Kaufmotiv: Pragmatische Anleitung\n"
+    )
+    project = _project_with_metadata(tmp_path, body)
+
+    report = build_persona_report(project)
+
+    # Override label must take precedence over niche baseline
+    labels = [p.label for p in report.personas]
+    assert "Der Spezialist" in labels
+    assert "persona_override" in report.signal_flags
+
+
+def test_build_persona_report_override_inherits_baseline_for_missing_fields(tmp_path: Path):
+    """A sparse override (only label) still produces a renderable persona."""
+    body = (
+        "## Personas\n\n"
+        "### Persona 1: Mein Wunsch-Käufer\n"
+    )
+    project = _project_with_metadata(tmp_path, body)
+
+    report = build_persona_report(project)
+
+    persona = report.personas[0]
+    assert persona.label == "Mein Wunsch-Käufer"
+    assert persona.problem  # baseline problem filled in
+    assert persona.buying_motive  # baseline motive filled in
+    assert persona.age_range  # baseline age filled in
+    assert persona.channels  # channel suggestions still computed
+
+
+def test_build_persona_report_without_overrides_keeps_baseline(tmp_path: Path):
+    project = _project_with_metadata(tmp_path, "# Buch\n\nKein Override.\n")
+
+    report = build_persona_report(project)
+
+    # No override signal flag when nothing was declared
+    assert "persona_override" not in report.signal_flags
+    assert len(report.personas) == MAX_PERSONAS
+
+
+def test_build_persona_report_override_keeps_channel_logic(tmp_path: Path):
+    """Channels are derived from the override's job text, not baseline."""
+    body = (
+        "## Personas\n\n"
+        "### Persona 1: Solo-Berater\n"
+        "- Job: Freelance-Berater\n"
+        "- Problem: Akquise fehlt\n"
+    )
+    project = _project_with_metadata(tmp_path, body)
+
+    report = build_persona_report(project)
+
+    persona = report.personas[0]
+    # 'freelanc' → "LinkedIn + X (Solo-Business)" via _suggest_channels
+    assert any("Solo-Business" in ch for ch in persona.channels)
+
+
+def test_extract_persona_overrides_handles_missing_files_gracefully(tmp_path: Path):
+    ghost = tmp_path / "ghost.md"
+    project = BookProject(
+        project_id="x",
+        root=tmp_path,
+        metadata_files=[ghost],
+        notes_files=[],
+    )
+
+    assert extract_persona_overrides(project) == []
+
+
+def test_extract_persona_overrides_first_field_wins_for_duplicates(tmp_path: Path):
+    body = (
+        "## Personas\n\n"
+        "### Persona 1: X\n"
+        "- Problem: erstes problem\n"
+        "- Problem: zweites problem\n"
+    )
+    project = _project_with_metadata(tmp_path, body)
+
+    persona = extract_persona_overrides(project)[0]
+    assert persona["problem"] == "erstes problem"
