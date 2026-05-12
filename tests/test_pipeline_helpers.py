@@ -16,6 +16,7 @@ from modules.kdp_keywords import KDPKeyword
 from modules.personas import BuyerPersona, PersonaReport
 from modules.persona_match import build_persona_match_report
 from modules.pipeline import (
+    _amazon_html_preview_payload,
     _persona_match_payload,
     _round_delta_payload,
     _score_history_payload,
@@ -1345,3 +1346,100 @@ def test_persona_match_payload_weakest_missing_tokens_are_tuple():
     assert payload is not None
     assert isinstance(payload["weakest_missing"], tuple)
     assert len(payload["weakest_missing"]) <= 5
+
+
+# --- _amazon_html_preview_payload -----------------------------------------
+
+
+class _FakeAmazonHtml:
+    """Minimal stand-in for ``AmazonDescriptionHtml`` used in tests."""
+
+    def __init__(
+        self,
+        headline: str = "",
+        lead: str = "",
+        bullets: tuple[str, ...] = (),
+        char_count: int = 0,
+        keyword_score: int = 0,
+    ):
+        self.headline = headline
+        self.lead = lead
+        self.bullets = bullets
+        self.char_count = char_count
+        self.keyword_score = keyword_score
+
+
+def test_amazon_html_preview_payload_returns_none_for_none_input():
+    assert _amazon_html_preview_payload(None) is None
+
+
+def test_amazon_html_preview_payload_returns_none_when_all_fields_empty():
+    snippet = _FakeAmazonHtml(headline="", lead="", bullets=())
+    assert _amazon_html_preview_payload(snippet) is None
+
+
+def test_amazon_html_preview_payload_carries_headline_and_lead():
+    snippet = _FakeAmazonHtml(
+        headline="Solides Sachbuch",
+        lead="Aus 10 Jahren operativer Praxis: konkrete Methoden.",
+        char_count=1024,
+        keyword_score=42,
+    )
+
+    payload = _amazon_html_preview_payload(snippet)
+
+    assert payload is not None
+    assert payload["headline"] == "Solides Sachbuch"
+    assert "operativer Praxis" in payload["lead"]
+    assert payload["char_count"] == 1024
+    assert payload["keyword_score"] == 42
+    assert payload["bullets"] == ()
+
+
+def test_amazon_html_preview_payload_caps_bullets_at_two():
+    snippet = _FakeAmazonHtml(
+        headline="h",
+        lead="l",
+        bullets=("eins", "zwei", "drei", "vier"),
+    )
+
+    payload = _amazon_html_preview_payload(snippet)
+
+    assert payload is not None
+    assert payload["bullets"] == ("eins", "zwei")
+
+
+def test_amazon_html_preview_payload_skips_empty_bullets():
+    snippet = _FakeAmazonHtml(
+        headline="h",
+        lead="l",
+        bullets=("  ", "eins", "", "zwei", "drei"),
+    )
+
+    payload = _amazon_html_preview_payload(snippet)
+
+    assert payload is not None
+    assert payload["bullets"] == ("eins", "zwei")
+
+
+def test_amazon_html_preview_payload_returns_payload_when_only_bullets_present():
+    """If headline+lead are empty but bullets exist, still surface them."""
+    snippet = _FakeAmazonHtml(
+        headline="",
+        lead="",
+        bullets=("punkt eins", "punkt zwei"),
+    )
+
+    payload = _amazon_html_preview_payload(snippet)
+
+    assert payload is not None
+    assert payload["headline"] == ""
+    assert payload["bullets"] == ("punkt eins", "punkt zwei")
+
+
+def test_amazon_html_preview_payload_bullets_are_tuple():
+    snippet = _FakeAmazonHtml(headline="h", lead="l", bullets=("one",))
+
+    payload = _amazon_html_preview_payload(snippet)
+    assert payload is not None
+    assert isinstance(payload["bullets"], tuple)

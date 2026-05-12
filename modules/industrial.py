@@ -936,6 +936,69 @@ def _render_top_persona(
     return lines
 
 
+def _render_amazon_html_preview(
+    amazon_html_preview: dict[str, Any] | None,
+) -> list[str]:
+    """Render the plain-text Kindle-shopper preview of the Amazon HTML.
+
+    Shows ``headline + lead + up to 2 bullets`` as the reader sees
+    them above "Mehr lesen" — without HTML tags, normalized whitespace.
+    Returns ``[]`` when the payload is empty or carries no real content
+    so the section is omitted from the summary.
+
+    The preview text gets clipped to a soft cap so the beginner_summary
+    stays scannable; the author still has the full ``amazon_description.html``
+    artifact for the complete listing.
+    """
+
+    if not amazon_html_preview:
+        return []
+    headline = str(amazon_html_preview.get("headline") or "").strip()
+    lead = str(amazon_html_preview.get("lead") or "").strip()
+    bullets = list(amazon_html_preview.get("bullets") or ())
+    bullets = [str(item).strip() for item in bullets if str(item).strip()]
+    if not headline and not lead and not bullets:
+        return []
+
+    lines: list[str] = [
+        "## Amazon-Beschreibung (Vorschau)",
+        "",
+        (
+            "So liest der Kindle-Shopper die ersten Zeilen — ohne HTML-Tags,"
+            " genau wie im Amazon-Listing über dem \"Mehr lesen\"-Link."
+        ),
+        "",
+    ]
+    if headline:
+        lines.append(f"> **{headline}**")
+    if lead:
+        if headline:
+            lines.append(">")
+        lines.append(f"> {lead}")
+    if bullets:
+        if headline or lead:
+            lines.append(">")
+        for bullet in bullets:
+            lines.append(f"> - {bullet}")
+
+    char_count = int(amazon_html_preview.get("char_count") or 0)
+    keyword_score = int(amazon_html_preview.get("keyword_score") or 0)
+    if char_count > 0 or keyword_score > 0:
+        meta_parts: list[str] = []
+        if char_count > 0:
+            meta_parts.append(f"Gesamt-Zeichen: {char_count}")
+        if keyword_score > 0:
+            meta_parts.append(f"Keyword-Score: {keyword_score}")
+        lines.append("")
+        lines.append(" · ".join(meta_parts))
+    lines.extend([
+        "",
+        "Volle HTML-Fassung siehe `amazon_description.html`.",
+        "",
+    ])
+    return lines
+
+
 def _render_llm_fallback_notice(
     llm_fallback: dict[str, Any] | None,
 ) -> list[str]:
@@ -1185,6 +1248,7 @@ def render_beginner_summary(
     top_chapter_balance: dict[str, Any] | None = None,
     persona_match: dict[str, Any] | None = None,
     llm_fallback: dict[str, Any] | None = None,
+    amazon_html_preview: dict[str, Any] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -1252,6 +1316,7 @@ def render_beginner_summary(
     lines.extend(_render_top_collision_risk(top_collision_risk))
     lines.extend(_render_top_rewrite(top_rewrite))
     lines.extend(_render_top_kdp_keywords(top_kdp_keywords))
+    lines.extend(_render_amazon_html_preview(amazon_html_preview))
 
     lines.extend([
         "## Was bedeutet das praktisch?",

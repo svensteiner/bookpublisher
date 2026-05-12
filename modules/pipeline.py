@@ -349,6 +349,49 @@ def _top_persona_payload(
     }
 
 
+AMAZON_HTML_PREVIEW_MAX_BULLETS: int = 2
+AMAZON_HTML_PREVIEW_MAX_CHARS: int = 320
+
+
+def _amazon_html_preview_payload(amazon_html: Any) -> dict | None:
+    """Compact Amazon-HTML preview for beginner_summary.
+
+    Renders the headline + lead + up to two bullets as the Kindle
+    shopper would *read* them — no HTML tags, normalized whitespace.
+    This is the surface the author judges by; it's the difference
+    between "I wrote good HTML" and "the listing reads well above
+    the Mehr-lesen fold".
+
+    Returns ``None`` when the snippet has no content at all so the
+    section gets skipped entirely instead of rendering an empty
+    block.
+    """
+
+    if amazon_html is None:
+        return None
+    headline = str(getattr(amazon_html, "headline", "") or "").strip()
+    lead = str(getattr(amazon_html, "lead", "") or "").strip()
+    bullets_raw = getattr(amazon_html, "bullets", ()) or ()
+    bullets: list[str] = []
+    for raw in bullets_raw:
+        text = str(raw or "").strip()
+        if text:
+            bullets.append(text)
+        if len(bullets) >= AMAZON_HTML_PREVIEW_MAX_BULLETS:
+            break
+    if not headline and not lead and not bullets:
+        return None
+    char_count = int(getattr(amazon_html, "char_count", 0) or 0)
+    keyword_score = int(getattr(amazon_html, "keyword_score", 0) or 0)
+    return {
+        "headline": headline,
+        "lead": lead,
+        "bullets": tuple(bullets),
+        "char_count": char_count,
+        "keyword_score": keyword_score,
+    }
+
+
 def _persona_match_payload(persona_match: Any) -> dict | None:
     """Compact persona-match highlight for beginner_summary.
 
@@ -804,6 +847,8 @@ class PublisherPipeline:
                 project.amazon_description,
             )
             persona_match_highlight = _persona_match_payload(persona_match)
+            amazon_html_snippet = build_amazon_description_html(project)
+            amazon_html_preview = _amazon_html_preview_payload(amazon_html_snippet)
             self.writer.write_text(
                 "beginner_summary.md",
                 render_beginner_summary(
@@ -822,6 +867,7 @@ class PublisherPipeline:
                     top_chapter_balance=top_chapter_balance,
                     persona_match=persona_match_highlight,
                     llm_fallback=self.llm.fallback_summary(),
+                    amazon_html_preview=amazon_html_preview,
                 ),
                 project.project_id,
             )
@@ -880,7 +926,6 @@ class PublisherPipeline:
                 rewrite_json,
                 project.project_id,
             )
-            amazon_html_snippet = build_amazon_description_html(project)
             self.writer.write_text(
                 "amazon_description.html",
                 amazon_html_snippet.html,

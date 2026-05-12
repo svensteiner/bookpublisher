@@ -1133,6 +1133,99 @@ def test_render_beginner_summary_persona_match_omits_weakest_line_when_data_part
     assert "Schwächste Persona" not in summary
 
 
+def test_render_beginner_summary_amazon_html_preview_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    preview = {
+        "headline": "Solides Sachbuch fuer CFOs",
+        "lead": "Aus 10 Jahren operativer Praxis: konkrete Methoden mit Zahlen.",
+        "bullets": ("Praxis-Playbook mit Checklisten", "Echte Zahlen aus 12 Projekten"),
+        "char_count": 1240,
+        "keyword_score": 65,
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, amazon_html_preview=preview
+    )
+
+    assert "## Amazon-Beschreibung (Vorschau)" in summary
+    assert "Solides Sachbuch fuer CFOs" in summary
+    assert "Aus 10 Jahren operativer Praxis" in summary
+    assert "Praxis-Playbook mit Checklisten" in summary
+    assert "Echte Zahlen aus 12 Projekten" in summary
+    assert "Gesamt-Zeichen: 1240" in summary
+    assert "Keyword-Score: 65" in summary
+    assert "amazon_description.html" in summary
+
+
+def test_render_beginner_summary_amazon_html_preview_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, amazon_html_preview=None
+    )
+    assert "Amazon-Beschreibung (Vorschau)" not in summary
+
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, amazon_html_preview={}
+    )
+    assert "Amazon-Beschreibung (Vorschau)" not in summary_empty
+
+
+def test_render_beginner_summary_amazon_html_preview_skips_when_all_text_empty():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    preview = {
+        "headline": "  ",
+        "lead": "",
+        "bullets": (),
+        "char_count": 0,
+        "keyword_score": 0,
+    }
+
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, amazon_html_preview=preview
+    )
+
+    assert "Amazon-Beschreibung (Vorschau)" not in summary
+
+
+def test_render_beginner_summary_amazon_html_preview_works_with_bullets_only():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    preview = {
+        "headline": "",
+        "lead": "",
+        "bullets": ("punkt eins", "punkt zwei"),
+        "char_count": 0,
+        "keyword_score": 0,
+    }
+
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, amazon_html_preview=preview
+    )
+
+    assert "## Amazon-Beschreibung (Vorschau)" in summary
+    assert "punkt eins" in summary
+    assert "punkt zwei" in summary
+
+
+def test_render_beginner_summary_amazon_html_preview_omits_meta_when_zero():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    preview = {
+        "headline": "Headline",
+        "lead": "Lead text.",
+        "bullets": (),
+        "char_count": 0,
+        "keyword_score": 0,
+    }
+
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, amazon_html_preview=preview
+    )
+
+    assert "## Amazon-Beschreibung (Vorschau)" in summary
+    # Both meta values zero → meta line is skipped entirely
+    assert "Gesamt-Zeichen" not in summary
+    assert "Keyword-Score" not in summary
+
+
 def test_render_beginner_summary_top_positioning_low_strength_uses_review_badge():
     """A strength of 70 must render with the REVIEW (yellow) badge."""
     result = build_industrial_qa(_project(manuscript=None, cover=None))
