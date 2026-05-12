@@ -7,11 +7,17 @@ must stay isolated so beginner_summary stays trustworthy.
 
 from __future__ import annotations
 
+from modules.competitive_positioning import (
+    CompetitorArchetype,
+    DifferentiationAngle,
+    PositioningReport,
+)
 from modules.kdp_keywords import KDPKeyword
 from modules.pipeline import (
     _round_delta_payload,
     _score_history_payload,
     _top_kdp_keywords_payload,
+    _top_positioning_payload,
     _top_rewrite_payload,
     _weakest_chapter_payload,
     _weakest_sample_payload,
@@ -635,3 +641,123 @@ def test_top_kdp_keywords_payload_dedups_when_same_text_repeated():
     assert top is not None
     texts = [item["text"] for item in top]
     assert texts.count("a") == 1
+
+
+# ─── _top_positioning_payload ───────────────────────────────────────────
+
+
+def _positioning(
+    *,
+    angles: list[DifferentiationAngle] | None = None,
+    pitch: str = "Pitch text.",
+    niche_label: str = "Finanzen / CFO / Controlling",
+    niche_confidence: int = 80,
+    audience: str = "CFOs in mittelständischen Firmen",
+    subject: str = "ein Liquiditäts-Playbook",
+) -> PositioningReport:
+    if angles is None:
+        angles = [
+            DifferentiationAngle(
+                key="zahlen_beweis",
+                claim="Beweisführung mit Zahlen statt Behauptungen.",
+                evidence="Beschreibung enthält 30 Tage und 12 Kennzahlen.",
+                strength=80,
+            ),
+            DifferentiationAngle(
+                key="operator_stimme",
+                claim="Operator-/CFO-Praxisstimme.",
+                evidence="Beschreibung nennt CFO-Begriffe.",
+                strength=63,
+            ),
+        ]
+    return PositioningReport(
+        niche_key="finanzen_und_cfo",
+        niche_label=niche_label,
+        niche_confidence=niche_confidence,
+        audience=audience,
+        subject=subject,
+        archetypes=[
+            CompetitorArchetype(
+                name="Klassisches Lehrbuch",
+                why_it_competes="Theoretisch.",
+                typical_weakness="Keine Praxis.",
+            )
+        ],
+        unique_angles=angles,
+        collision_risks=[],
+        positioning_pitch=pitch,
+        anchors=["cfo", "liquiditaet"],
+    )
+
+
+def test_top_positioning_payload_returns_none_when_report_missing():
+    assert _top_positioning_payload(None) is None
+
+
+def test_top_positioning_payload_returns_none_when_no_angles():
+    report = _positioning(angles=[])
+    assert _top_positioning_payload(report) is None
+
+
+def test_top_positioning_payload_returns_none_when_only_kein_signal():
+    """The fallback ``kein_signal`` angle must not surface in beginner_summary."""
+    report = _positioning(angles=[
+        DifferentiationAngle(
+            key="kein_signal",
+            claim="Kein klares Differenzierungssignal in den Metadaten erkennbar.",
+            evidence="Titel, Untertitel und Beschreibung sind zu allgemein.",
+            strength=0,
+        )
+    ])
+    assert _top_positioning_payload(report) is None
+
+
+def test_top_positioning_payload_returns_none_when_top_strength_zero():
+    """Even a real angle key with zero strength is no signal worth showing."""
+    report = _positioning(angles=[
+        DifferentiationAngle(
+            key="zahlen_beweis",
+            claim="x",
+            evidence="y",
+            strength=0,
+        )
+    ])
+    assert _top_positioning_payload(report) is None
+
+
+def test_top_positioning_payload_picks_first_angle_as_top():
+    """``unique_angles`` is already sorted by strength desc — first wins."""
+    report = _positioning()
+    payload = _top_positioning_payload(report)
+    assert payload is not None
+    assert payload["angle_key"] == "zahlen_beweis"
+    assert payload["angle_strength"] == 80
+    assert "Beweisführung" in payload["angle_claim"]
+    assert "30 Tage" in payload["angle_evidence"]
+
+
+def test_top_positioning_payload_carries_pitch_and_niche():
+    report = _positioning(
+        pitch="Dieses Buch liefert ein Liquiditäts-Playbook für CFOs.",
+        niche_label="Finanzen / CFO / Controlling",
+        niche_confidence=92,
+        audience="CFOs in KMU",
+    )
+    payload = _top_positioning_payload(report)
+    assert payload is not None
+    assert payload["pitch"].startswith("Dieses Buch liefert")
+    assert payload["niche_label"] == "Finanzen / CFO / Controlling"
+    assert payload["niche_confidence"] == 92
+    assert payload["audience"] == "CFOs in KMU"
+
+
+def test_top_positioning_payload_is_immutable_against_caller_mutation():
+    """Mutating the returned dict must not affect the source report."""
+    report = _positioning()
+    payload = _top_positioning_payload(report)
+    assert payload is not None
+    payload["angle_claim"] = "mutated"
+    payload["pitch"] = "mutated"
+    # source angle is frozen and still carries the original claim
+    assert report.unique_angles[0].claim != "mutated"
+    assert report.positioning_pitch != "mutated"

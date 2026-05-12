@@ -10,6 +10,7 @@ from modules.amazon_html import (
 )
 from modules.artifacts import ArtifactWriter
 from modules.competitive_positioning import (
+    PositioningReport,
     build_positioning_report,
     render_positioning_markdown,
 )
@@ -301,6 +302,52 @@ def _top_kdp_keywords_payload(
     return picked
 
 
+def _top_positioning_payload(
+    positioning: PositioningReport | None,
+) -> dict | None:
+    """Compact positioning highlight for beginner_summary.
+
+    Returns ``None`` when there is no positioning report or when the
+    report carries only the ``kein_signal`` fallback angle — without a
+    real differentiation signal the summary should stay quiet rather
+    than paste a generic pitch into the author's face.
+
+    Otherwise returns a dict the renderer can consume without re-reading
+    the full positioning report:
+
+    - ``angle_claim`` / ``angle_evidence`` / ``angle_strength``:
+      the single strongest differentiation angle (first entry of
+      ``unique_angles`` — already sorted by strength desc).
+    - ``pitch``: the one-sentence positioning pitch ready to paste.
+    - ``niche_label`` / ``niche_confidence``: helps the author judge
+      whether the niche detection is plausible.
+    - ``audience``: surfaced as a separate field so the renderer can
+      build a short "Wer kauft das?" line without re-parsing the pitch.
+
+    The helper is immutable: it copies values out so a caller mutating
+    the returned dict cannot affect the source report.
+    """
+
+    if positioning is None:
+        return None
+    angles = list(positioning.unique_angles or [])
+    if not angles:
+        return None
+    top = angles[0]
+    if top.key == "kein_signal" or top.strength <= 0:
+        return None
+    return {
+        "angle_key": top.key,
+        "angle_claim": top.claim,
+        "angle_evidence": top.evidence,
+        "angle_strength": int(top.strength),
+        "pitch": positioning.positioning_pitch,
+        "niche_label": positioning.niche_label,
+        "niche_confidence": int(positioning.niche_confidence),
+        "audience": positioning.audience,
+    }
+
+
 def _weakest_sample_payload(sample_json: dict | None) -> dict | None:
     """Extract the highest-risk Kindle-Sample section from a sample-scan payload.
 
@@ -506,6 +553,8 @@ class PublisherPipeline:
             score_history_highlight = _score_history_payload(history)
             kdp_keywords = build_kdp_keywords(project)
             top_kdp_keywords = _top_kdp_keywords_payload(kdp_keywords)
+            positioning = build_positioning_report(project)
+            top_positioning = _top_positioning_payload(positioning)
             self.writer.write_text(
                 "beginner_summary.md",
                 render_beginner_summary(
@@ -517,6 +566,7 @@ class PublisherPipeline:
                     round_delta_highlight=round_delta_highlight,
                     score_history_highlight=score_history_highlight,
                     top_kdp_keywords=top_kdp_keywords,
+                    top_positioning=top_positioning,
                 ),
                 project.project_id,
             )
@@ -591,7 +641,6 @@ class PublisherPipeline:
                 amazon_html_snippet.to_json(),
                 project.project_id,
             )
-            positioning = build_positioning_report(project)
             self.writer.write_text(
                 "competitive_positioning.md",
                 render_positioning_markdown(project, positioning),

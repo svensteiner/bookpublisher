@@ -787,6 +787,71 @@ def _render_weakest_sample(weakest_sample: dict[str, Any] | None) -> list[str]:
     ]
 
 
+def _render_top_positioning(
+    top_positioning: dict[str, Any] | None,
+) -> list[str]:
+    """Render the 'Positionierung' block from a top-positioning payload.
+
+    Surfaces the strongest differentiation angle plus the one-sentence
+    pitch directly in beginner_summary so the author sees what makes
+    the book unique without opening ``competitive_positioning.md``.
+
+    The dict is expected to carry ``angle_claim``, ``angle_evidence``,
+    ``angle_strength``, ``pitch``, ``niche_label``, ``niche_confidence``
+    and ``audience``. Returns an empty list when no payload is provided
+    or when the pitch text is empty — keeping the summary clean when
+    the metadata gives no positioning signal.
+    """
+
+    if not top_positioning:
+        return []
+    pitch = str(top_positioning.get("pitch") or "").strip()
+    claim = str(top_positioning.get("angle_claim") or "").strip()
+    if not pitch and not claim:
+        return []
+    strength = int(top_positioning.get("angle_strength") or 0)
+    evidence = str(top_positioning.get("angle_evidence") or "").strip()
+    niche_label = str(top_positioning.get("niche_label") or "").strip()
+    niche_confidence = int(top_positioning.get("niche_confidence") or 0)
+    audience = str(top_positioning.get("audience") or "").strip()
+    badge, _ = score_badge(strength)
+
+    lines: list[str] = [
+        "## Positionierung",
+        "",
+        (
+            "Das ist dein Differenzierungs-Hebel gegenüber den typischen "
+            "Wettbewerbern in der Nische — kannst du in die Amazon-Beschreibung "
+            "übernehmen."
+        ),
+        "",
+    ]
+    if niche_label:
+        if niche_confidence:
+            lines.append(f"- **Nische:** {niche_label} (Konfidenz: {niche_confidence}/100)")
+        else:
+            lines.append(f"- **Nische:** {niche_label}")
+    if audience:
+        lines.append(f"- **Zielgruppe:** {audience}")
+    if claim:
+        lines.append(f"- {badge} **Stärkster Angle:** {claim} (Stärke: {strength}/100)")
+        if evidence:
+            lines.append(f"  - Beleg: {evidence}")
+    if pitch:
+        lines.extend([
+            "",
+            "**Positionierungs-Satz:**",
+            "",
+            f"> {pitch}",
+        ])
+    lines.extend([
+        "",
+        "Wettbewerber-Archetypen und Kollisions-Risiken siehe `competitive_positioning.md`.",
+        "",
+    ])
+    return lines
+
+
 def render_beginner_summary(
     project: BookProject,
     report: dict[str, Any],
@@ -796,6 +861,7 @@ def render_beginner_summary(
     round_delta_highlight: dict[str, Any] | None = None,
     score_history_highlight: dict[str, Any] | None = None,
     top_kdp_keywords: list[dict[str, Any]] | None = None,
+    top_positioning: dict[str, Any] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -854,6 +920,7 @@ def render_beginner_summary(
     lines.extend(_render_score_history_highlight(score_history_highlight))
     lines.extend(_render_weakest_chapters(weakest_chapters))
     lines.extend(_render_weakest_sample(weakest_sample))
+    lines.extend(_render_top_positioning(top_positioning))
     lines.extend(_render_top_rewrite(top_rewrite))
     lines.extend(_render_top_kdp_keywords(top_kdp_keywords))
 

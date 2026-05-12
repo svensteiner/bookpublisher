@@ -782,3 +782,106 @@ def test_render_beginner_summary_handles_empty_gate_list():
     # Without gates we still get the structure, just no Gate-Übersicht.
     assert "Gate-Übersicht" not in summary
     assert "Score:" in summary
+
+
+# ─── Top-Positioning section ────────────────────────────────────────────
+
+
+def test_render_beginner_summary_top_positioning_section_present():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_positioning = {
+        "angle_key": "zahlen_beweis",
+        "angle_claim": "Beweisführung mit Zahlen statt Behauptungen.",
+        "angle_evidence": "Beschreibung enthält 30 Tage und 12 Kennzahlen.",
+        "angle_strength": 80,
+        "pitch": "Dieses Buch liefert ein Liquiditäts-Playbook für CFOs in KMU.",
+        "niche_label": "Finanzen / CFO / Controlling",
+        "niche_confidence": 92,
+        "audience": "CFOs in mittelständischen Firmen",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_positioning=top_positioning
+    )
+    assert "## Positionierung" in summary
+    assert "Beweisführung mit Zahlen" in summary
+    assert "Stärke: 80/100" in summary
+    assert "Beschreibung enthält 30 Tage" in summary
+    assert "Finanzen / CFO / Controlling" in summary
+    assert "Konfidenz: 92/100" in summary
+    assert "CFOs in mittelständischen Firmen" in summary
+    assert "Dieses Buch liefert ein Liquiditäts-Playbook" in summary
+    assert "`competitive_positioning.md`" in summary
+    # Strength 80 must use the READY badge.
+    assert SCORE_BADGE_READY in summary
+
+
+def test_render_beginner_summary_top_positioning_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_positioning=None
+    )
+    assert "## Positionierung" not in summary
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_positioning={}
+    )
+    assert "## Positionierung" not in summary_empty
+
+
+def test_render_beginner_summary_top_positioning_section_absent_when_no_signal():
+    """Empty pitch and empty claim must skip the section — no empty quote."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_positioning = {
+        "angle_key": "kein_signal",
+        "angle_claim": "",
+        "angle_evidence": "",
+        "angle_strength": 0,
+        "pitch": "   ",
+        "niche_label": "Allgemeines Sachbuch",
+        "niche_confidence": 0,
+        "audience": "",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_positioning=top_positioning
+    )
+    assert "## Positionierung" not in summary
+
+
+def test_render_beginner_summary_top_positioning_handles_partial_payload():
+    """Missing optional fields must not crash the renderer."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_positioning = {
+        "angle_claim": "Operator-Stimme statt Berater-Sicht.",
+        "pitch": "Dieses Buch liefert eine Methode für Solopreneure.",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_positioning=top_positioning
+    )
+    assert "## Positionierung" in summary
+    assert "Operator-Stimme" in summary
+    # No niche line when label missing
+    assert "Konfidenz" not in summary
+    # No evidence line when evidence missing
+    assert "Beleg:" not in summary
+    # Strength 0 falls back to FIX badge — but section still rendered.
+    assert "Stärke: 0/100" in summary
+
+
+def test_render_beginner_summary_top_positioning_low_strength_uses_review_badge():
+    """A strength of 70 must render with the REVIEW (yellow) badge."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_positioning = {
+        "angle_claim": "Spitze Zielgruppe (CFOs) statt 'für alle'.",
+        "angle_evidence": "Untertitel nennt CFO.",
+        "angle_strength": 70,
+        "pitch": "Dieses Buch liefert ... für CFOs.",
+        "niche_label": "Finanzen / CFO / Controlling",
+        "niche_confidence": 60,
+        "audience": "CFOs",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_positioning=top_positioning
+    )
+    section_start = summary.index("## Positionierung")
+    section_end = summary.index("competitive_positioning.md", section_start)
+    section = summary[section_start:section_end]
+    assert SCORE_BADGE_REVIEW in section
