@@ -13,6 +13,27 @@ from modules.readers import ManuscriptReadError
 from modules.run_logger import RunLogger
 
 
+DIALOG_TITLE_MANUSCRIPT = "Manuskript konnte nicht gelesen werden"
+DIALOG_TITLE_CONFIG = "Konfiguration"
+DIALOG_TITLE_GENERIC = "Pruefrunde fehlgeschlagen"
+
+
+def error_dialog_payload(exc: BaseException) -> tuple[str, str]:
+    """Return ``(title, message)`` for the user-facing error dialog.
+
+    Pure dispatch so the routing of round-worker exceptions to the
+    matching dialog title can be verified without spinning up a Tk root
+    in tests. ``str(exc)`` is used verbatim so the readable German
+    explanation produced by ``ManuscriptReadError`` / ``ConfigError``
+    reaches the user unchanged — no traceback noise leaks through.
+    """
+    if isinstance(exc, ManuscriptReadError):
+        return DIALOG_TITLE_MANUSCRIPT, str(exc)
+    if isinstance(exc, ConfigError):
+        return DIALOG_TITLE_CONFIG, str(exc)
+    return DIALOG_TITLE_GENERIC, str(exc)
+
+
 class PublisherGui(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -175,18 +196,26 @@ class PublisherGui(tk.Tk):
                     self.open_button.configure(state=tk.NORMAL if self.last_report_dir else tk.DISABLED)
                     self._set_busy(False)
                 elif kind == "error":
-                    self.status.set("Fehler.")
-                    self._set_busy(False)
-                    if isinstance(payload, ManuscriptReadError):
-                        messagebox.showerror("Manuskript konnte nicht gelesen werden", str(payload))
-                    elif isinstance(payload, ConfigError):
-                        messagebox.showerror("Konfiguration", str(payload))
-                    else:
-                        messagebox.showerror("Pruefrunde fehlgeschlagen", str(payload))
-                    self._set_report_text(str(payload))
+                    self._handle_error_event(payload)
         except queue.Empty:
             pass
         self.after(200, self._poll_events)
+
+    def _handle_error_event(self, payload: object) -> None:
+        """Render the error branch of ``_poll_events``.
+
+        Extracted from the event loop so the dispatch (status, busy,
+        dialog, report text) can be verified end-to-end in tests via a
+        stub instance without spinning up a real Tk root.
+        """
+        self.status.set("Fehler.")
+        self._set_busy(False)
+        if isinstance(payload, BaseException):
+            title, message = error_dialog_payload(payload)
+        else:
+            title, message = DIALOG_TITLE_GENERIC, str(payload)
+        messagebox.showerror(title, message)
+        self._set_report_text(message)
 
     def _open_report_dir(self) -> None:
         if not self.last_report_dir:
