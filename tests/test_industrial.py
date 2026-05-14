@@ -943,6 +943,85 @@ def test_render_beginner_summary_top_positioning_handles_partial_payload():
     assert "Stärke: 0/100" in summary
 
 
+def test_render_beginner_summary_top_positioning_renders_additional_angles():
+    """When ``additional_angles`` is set, the renderer must surface each
+    secondary angle under the strongest one — same Beleg-line layout but
+    with the ``Weiterer Angle`` label so the author can tell the
+    hierarchy at a glance."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_positioning = {
+        "angle_key": "zahlen_beweis",
+        "angle_claim": "Beweisführung mit Zahlen statt Behauptungen.",
+        "angle_evidence": "Beschreibung enthält 30 Tage und 12 Kennzahlen.",
+        "angle_strength": 80,
+        "additional_angles": [
+            {
+                "angle_key": "operator_stimme",
+                "angle_claim": "Operator-Praxisstimme statt Berater-Sicht.",
+                "angle_evidence": "Beschreibung nennt CFO-Begriffe.",
+                "angle_strength": 63,
+            },
+            {
+                "angle_key": "anti_hype",
+                "angle_claim": "Anti-Hype: keine Buzzwords.",
+                "angle_evidence": "Beschreibung ohne 'revolutionär'.",
+                "angle_strength": 55,
+            },
+        ],
+        "pitch": "Pitch.",
+        "niche_label": "Finanzen / CFO / Controlling",
+        "niche_confidence": 80,
+        "audience": "CFOs",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_positioning=top_positioning
+    )
+    assert "Stärkster Angle" in summary
+    assert summary.count("**Weiterer Angle:**") == 2
+    assert "Operator-Praxisstimme statt Berater-Sicht." in summary
+    assert "Stärke: 63/100" in summary
+    assert "CFO-Begriffe" in summary
+    assert "Anti-Hype: keine Buzzwords." in summary
+    assert "Stärke: 55/100" in summary
+
+
+def test_render_beginner_summary_top_positioning_no_extras_when_list_empty():
+    """Empty ``additional_angles`` must not produce a 'Weiterer Angle' line —
+    keeps the default summary compact."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_positioning = {
+        "angle_claim": "X.",
+        "angle_strength": 80,
+        "additional_angles": [],
+        "pitch": "Pitch.",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_positioning=top_positioning
+    )
+    assert "Stärkster Angle" in summary
+    assert "Weiterer Angle" not in summary
+
+
+def test_render_beginner_summary_top_positioning_skips_extras_without_claim():
+    """Whitespace/missing claim in an extra angle must not produce a
+    stub bullet — guard against malformed payloads from older runs."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_positioning = {
+        "angle_claim": "Top.",
+        "angle_strength": 80,
+        "additional_angles": [
+            {"angle_claim": "   ", "angle_strength": 50},
+            {"angle_claim": "Echter Zweit-Angle.", "angle_strength": 55},
+        ],
+        "pitch": "Pitch.",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_positioning=top_positioning
+    )
+    assert summary.count("**Weiterer Angle:**") == 1
+    assert "Echter Zweit-Angle." in summary
+
+
 def test_render_beginner_summary_top_persona_section_present():
     result = build_industrial_qa(_project(manuscript=None, cover=None))
     top_persona = {

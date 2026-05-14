@@ -773,6 +773,91 @@ def test_top_positioning_payload_is_immutable_against_caller_mutation():
     assert report.positioning_pitch != "mutated"
 
 
+def test_top_positioning_payload_default_limit_has_no_additional_angles():
+    """Default limit=1 must leave the additional_angles list empty so the
+    existing summary layout stays compact for typical books."""
+    report = _positioning()
+    payload = _top_positioning_payload(report)
+    assert payload is not None
+    assert payload.get("additional_angles") == []
+
+
+def test_top_positioning_payload_limit_two_returns_second_angle():
+    report = _positioning()
+    payload = _top_positioning_payload(report, limit=2)
+    assert payload is not None
+    extras = payload["additional_angles"]
+    assert len(extras) == 1
+    assert extras[0]["angle_key"] == "operator_stimme"
+    assert extras[0]["angle_strength"] == 63
+    assert "Operator" in extras[0]["angle_claim"]
+    assert "CFO-Begriffe" in extras[0]["angle_evidence"]
+
+
+def test_top_positioning_payload_limit_three_caps_at_available_angles():
+    """If only two real angles exist, limit=3 must surface one extra — not
+    pad the list with stubs."""
+    report = _positioning()
+    payload = _top_positioning_payload(report, limit=3)
+    assert payload is not None
+    assert len(payload["additional_angles"]) == 1
+
+
+def test_top_positioning_payload_limit_clamped_to_max():
+    """Out-of-range limits (e.g. 99) must clamp to TOP_POSITIONING_MAX_LIMIT."""
+    angles = [
+        DifferentiationAngle(key=f"k{i}", claim=f"c{i}", evidence=f"e{i}", strength=90 - i)
+        for i in range(5)
+    ]
+    report = _positioning(angles=angles)
+    payload = _top_positioning_payload(report, limit=99)
+    assert payload is not None
+    # 1 top angle + 2 additional = 3 total (TOP_POSITIONING_MAX_LIMIT).
+    assert len(payload["additional_angles"]) == 2
+
+
+def test_top_positioning_payload_limit_zero_treated_as_one():
+    """limit <=0 must coerce to 1 — the strongest angle always belongs in
+    the summary when a real signal exists."""
+    report = _positioning()
+    payload = _top_positioning_payload(report, limit=0)
+    assert payload is not None
+    assert payload["angle_key"] == "zahlen_beweis"
+    assert payload["additional_angles"] == []
+
+
+def test_top_positioning_payload_skips_kein_signal_and_zero_strength():
+    """Even with a large limit, the additional list must skip fallback and
+    zero-strength angles so the summary stays signal-only."""
+    angles = [
+        DifferentiationAngle(key="zahlen_beweis", claim="real", evidence="x", strength=80),
+        DifferentiationAngle(key="operator_stimme", claim="zero", evidence="y", strength=0),
+        DifferentiationAngle(
+            key="kein_signal",
+            claim="fallback",
+            evidence="—",
+            strength=0,
+        ),
+        DifferentiationAngle(key="anti_hype", claim="second_real", evidence="z", strength=55),
+    ]
+    report = _positioning(angles=angles)
+    payload = _top_positioning_payload(report, limit=3)
+    assert payload is not None
+    extras = payload["additional_angles"]
+    assert len(extras) == 1
+    assert extras[0]["angle_key"] == "anti_hype"
+
+
+def test_top_positioning_payload_additional_angles_immutable():
+    """Mutating an entry in ``additional_angles`` must not affect the
+    source report's frozen DifferentiationAngle instances."""
+    report = _positioning()
+    payload = _top_positioning_payload(report, limit=2)
+    assert payload is not None
+    payload["additional_angles"][0]["angle_claim"] = "mutated"
+    assert report.unique_angles[1].claim != "mutated"
+
+
 # ─── _top_collision_risk_payload ───────────────────────────────────────
 
 

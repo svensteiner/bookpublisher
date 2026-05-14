@@ -1202,6 +1202,22 @@ def _render_top_positioning(
         lines.append(f"- {badge} **Stärkster Angle:** {claim} (Stärke: {strength}/100)")
         if evidence:
             lines.append(f"  - Beleg: {evidence}")
+    additional = top_positioning.get("additional_angles") or []
+    for extra in additional:
+        if not isinstance(extra, dict):
+            continue
+        extra_claim = str(extra.get("angle_claim") or "").strip()
+        if not extra_claim:
+            continue
+        extra_strength = int(extra.get("angle_strength") or 0)
+        extra_evidence = str(extra.get("angle_evidence") or "").strip()
+        extra_badge, _ = score_badge(extra_strength)
+        lines.append(
+            f"- {extra_badge} **Weiterer Angle:** {extra_claim} "
+            f"(Stärke: {extra_strength}/100)"
+        )
+        if extra_evidence:
+            lines.append(f"  - Beleg: {extra_evidence}")
     if pitch:
         lines.extend([
             "",

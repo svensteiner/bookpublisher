@@ -64,6 +64,12 @@ class AppConfig:
     balance_oversized_factor: float = 3.0
     balance_undersized_factor: float = 0.3
     balance_min_chapters: int = 3
+    # Number of competitive-positioning differentiation angles to surface
+    # in beginner_summary.md ("## Positionierung"). 1 = strongest angle
+    # only (default, keeps the summary compact). 2-3 = also show secondary
+    # angles for books where multiple differentiation hooks need to land
+    # in the Amazon description.
+    beginner_summary_positioning_limit: int = 1
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -112,5 +118,9 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         balance_oversized_factor=_clamp_float(data.get("balance_oversized_factor", 3.0), low=1.1, high=20.0),
         balance_undersized_factor=_clamp_float(data.get("balance_undersized_factor", 0.3), low=0.01, high=0.9),
         balance_min_chapters=max(2, int(data.get("balance_min_chapters", 3))),
+        beginner_summary_positioning_limit=max(
+            1,
+            min(3, int(data.get("beginner_summary_positioning_limit", 1))),
+        ),
         raw=data,
     )

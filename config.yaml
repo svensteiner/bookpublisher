@@ -33,6 +33,12 @@ balance_oversized_factor: 3.0
 balance_undersized_factor: 0.3
 balance_min_chapters: 3
 
+# Number of competitive-positioning differentiation angles surfaced in
+# beginner_summary.md. 1 = strongest angle only (default). Raise to 2-3
+# when the book has multiple differentiation hooks that all need to
+# land in the Amazon description.
+beginner_summary_positioning_limit: 1
+
 read_only: true
 artifact_mirror_single_project: true
 skills_directory: skills

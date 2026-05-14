@@ -477,8 +477,13 @@ def _top_collision_risk_payload(
     return None
 
 
+TOP_POSITIONING_MAX_LIMIT: int = 3
+
+
 def _top_positioning_payload(
     positioning: PositioningReport | None,
+    *,
+    limit: int = 1,
 ) -> dict | None:
     """Compact positioning highlight for beginner_summary.
 
@@ -493,11 +498,24 @@ def _top_positioning_payload(
     - ``angle_claim`` / ``angle_evidence`` / ``angle_strength``:
       the single strongest differentiation angle (first entry of
       ``unique_angles`` — already sorted by strength desc).
+    - ``additional_angles``: list of secondary differentiation angles
+      (angles 2..N where N=``limit`` capped at
+      ``TOP_POSITIONING_MAX_LIMIT``). Each entry carries ``angle_key``,
+      ``angle_claim``, ``angle_evidence`` and ``angle_strength``. Empty
+      list when ``limit <= 1`` or only one real signal exists.
     - ``pitch``: the one-sentence positioning pitch ready to paste.
     - ``niche_label`` / ``niche_confidence``: helps the author judge
       whether the niche detection is plausible.
     - ``audience``: surfaced as a separate field so the renderer can
       build a short "Wer kauft das?" line without re-parsing the pitch.
+
+    ``limit`` controls how many angles the renderer should surface in
+    total (1 = top angle only). Values <1 are coerced to 1 so the
+    summary always shows at least the strongest angle when a real
+    signal exists; values >``TOP_POSITIONING_MAX_LIMIT`` are clamped
+    down so we never crowd the summary with low-strength signals.
+    ``kein_signal`` and zero-strength angles are skipped at every
+    position — the report stays quiet when there is nothing to say.
 
     The helper is immutable: it copies values out so a caller mutating
     the returned dict cannot affect the source report.
@@ -505,17 +523,31 @@ def _top_positioning_payload(
 
     if positioning is None:
         return None
-    angles = list(positioning.unique_angles or [])
-    if not angles:
+    real_angles = [
+        angle
+        for angle in (positioning.unique_angles or [])
+        if angle.key != "kein_signal" and angle.strength > 0
+    ]
+    if not real_angles:
         return None
-    top = angles[0]
-    if top.key == "kein_signal" or top.strength <= 0:
-        return None
+    cap = max(1, min(TOP_POSITIONING_MAX_LIMIT, int(limit)))
+    picked = real_angles[:cap]
+    top = picked[0]
+    additional = [
+        {
+            "angle_key": angle.key,
+            "angle_claim": angle.claim,
+            "angle_evidence": angle.evidence,
+            "angle_strength": int(angle.strength),
+        }
+        for angle in picked[1:]
+    ]
     return {
         "angle_key": top.key,
         "angle_claim": top.claim,
         "angle_evidence": top.evidence,
         "angle_strength": int(top.strength),
+        "additional_angles": additional,
         "pitch": positioning.positioning_pitch,
         "niche_label": positioning.niche_label,
         "niche_confidence": int(positioning.niche_confidence),
@@ -902,7 +934,10 @@ class PublisherPipeline:
                     except (TypeError, ValueError):
                         arc_score_value = None
             positioning = build_positioning_report(project)
-            top_positioning = _top_positioning_payload(positioning)
+            top_positioning = _top_positioning_payload(
+                positioning,
+                limit=self.config.beginner_summary_positioning_limit,
+            )
             top_collision_risk = _top_collision_risk_payload(positioning)
             positioning_score_value = _positioning_score(positioning)
             balance_score_value = _balance_score(chapter_json)
