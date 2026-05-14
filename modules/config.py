@@ -31,6 +31,14 @@ class AppConfig:
     skills_directory: Path = Path("skills")
     memory_path: Path = Path("artifacts/agent_memory.json")
     supported_files: dict[str, list[str]] = field(default_factory=dict)
+    # Number of total attempts per model (primary AND fallback) before
+    # switching/giving up. 1 = no retry (legacy behavior). Production
+    # config.yaml sets this to 2 so transient rate-limit/timeout errors
+    # do not immediately drop the run onto the cheaper fallback model.
+    llm_retry_attempts: int = 1
+    # Base delay in seconds between retries; doubled per attempt
+    # (exponential backoff). Set to 0 in tests to avoid real sleeps.
+    llm_retry_backoff_seconds: float = 0.5
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -69,5 +77,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         skills_directory=Path(data.get("skills_directory", "skills")),
         memory_path=Path(data.get("memory_path", "artifacts/agent_memory.json")),
         supported_files=normalized_supported,
+        llm_retry_attempts=max(1, int(data.get("llm_retry_attempts", 2))),
+        llm_retry_backoff_seconds=max(0.0, float(data.get("llm_retry_backoff_seconds", 0.5))),
         raw=data,
     )

@@ -8,6 +8,13 @@ fallback_model: claude-haiku-4-5-20251001
 temperature: 0.2
 max_manuscript_chars: 60000
 
+# Retry transient API errors on the primary model before dropping to
+# the fallback model. 2 = one extra retry per model (so the primary
+# gets two chances before Haiku takes over). Exponential backoff
+# uses llm_retry_backoff_seconds as the base delay (0.5s, 1s, ...).
+llm_retry_attempts: 2
+llm_retry_backoff_seconds: 0.5
+
 read_only: true
 artifact_mirror_single_project: true
 skills_directory: skills

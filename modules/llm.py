@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any
+import time
+from typing import Any, Callable
 
 from modules.config import AppConfig, ConfigError
 from modules.run_logger import RunLogger
@@ -12,6 +13,11 @@ MAX_TOKENS = 4096
 
 
 class LLMClient:
+    # Sleep hook for exponential backoff between retries. Tests override
+    # this attribute (on the instance) with a no-op so they don't actually
+    # wait on the wall clock.
+    _sleep: Callable[[float], None] = staticmethod(time.sleep)
+
     def __init__(self, config: AppConfig, logger: RunLogger):
         self.config = config
         self.logger = logger
@@ -56,6 +62,58 @@ class LLMClient:
         text = response.content[0].text if response.content else ""
         return text.strip()
 
+    def _call_with_retries(
+        self, model: str, system: str, user: str, *, label: str
+    ) -> str:
+        """Call ``_call_model`` with exponential backoff retries.
+
+        Per ``AppConfig.llm_retry_attempts`` total attempts (>=1). Between
+        attempts, sleeps ``backoff * 2**(attempt-1)`` seconds where
+        ``backoff = AppConfig.llm_retry_backoff_seconds``. ``ConfigError``
+        is treated as a hard error (e.g., anthropic package not installed)
+        and is NOT retried — it propagates immediately.
+
+        ``label`` is logged alongside each error/retry so beginner_summary
+        traces can distinguish primary-model retries from fallback-model
+        retries.
+        """
+
+        attempts = max(1, int(self.config.llm_retry_attempts))
+        base_delay = max(0.0, float(self.config.llm_retry_backoff_seconds))
+        last_error: Exception | None = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                return self._call_model(model, system, user)
+            except ConfigError:
+                # Hard config error (e.g., anthropic missing) — no point retrying.
+                raise
+            except Exception as exc:
+                last_error = exc
+                self.logger.log(
+                    "model_call_error",
+                    model=model,
+                    error=str(exc),
+                    attempt=attempt,
+                    max_attempts=attempts,
+                    label=label,
+                )
+                if attempt >= attempts:
+                    break
+                wait_seconds = base_delay * (2 ** (attempt - 1))
+                self.logger.log(
+                    "model_call_retry",
+                    model=model,
+                    next_attempt=attempt + 1,
+                    wait_seconds=wait_seconds,
+                    label=label,
+                )
+                if wait_seconds > 0:
+                    self._sleep(wait_seconds)
+
+        assert last_error is not None
+        raise last_error
+
     def complete(self, system: str, user: str, model: str | None = None) -> str:
         primary_model = model or self.config.default_model
         fallback_model = self.config.fallback_model
@@ -63,17 +121,14 @@ class LLMClient:
 
         self.logger.log("model_call_started", model=primary_model)
         try:
-            text = self._call_model(primary_model, system, user)
+            text = self._call_with_retries(primary_model, system, user, label="primary")
             self.logger.log("model_call_completed", model=primary_model, chars=len(text))
             self._primary_calls += 1
             return text
+        except ConfigError:
+            # Hard error (anthropic package missing, etc.) — propagate as-is.
+            raise
         except Exception as primary_error:
-            self.logger.log(
-                "model_call_error",
-                model=primary_model,
-                error=str(primary_error),
-            )
-
             if not fallback_model or fallback_model == primary_model:
                 raise ConfigError(
                     f"Claude API call failed and no fallback model is configured. "
@@ -86,7 +141,9 @@ class LLMClient:
                 fallback_model=fallback_model,
             )
             try:
-                text = self._call_model(fallback_model, system, user)
+                text = self._call_with_retries(
+                    fallback_model, system, user, label="fallback"
+                )
                 self.logger.log(
                     "model_fallback_completed",
                     fallback_model=fallback_model,
@@ -96,11 +153,6 @@ class LLMClient:
                 self._last_fallback_model = fallback_model
                 return text
             except Exception as fallback_error:
-                self.logger.log(
-                    "model_call_error",
-                    model=fallback_model,
-                    error=str(fallback_error),
-                )
                 raise ConfigError(
                     "Claude API call failed for both the primary model "
                     f"({primary_model}) and the fallback model ({fallback_model}). "
