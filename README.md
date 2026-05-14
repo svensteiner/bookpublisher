@@ -215,14 +215,29 @@ For a distributable Windows folder app:
 
 ```bat
 python -m pip install -r requirements-dev.txt
-scripts\build_windows_app.bat
+scripts\build_windows_app.bat      :: GUI (windowed) EXE
+scripts\build_windows_cli.bat      :: CLI (console) EXE — used by smoke tests
+scripts\build_release_zip.bat      :: Bundles both + beispielbuch into BookPublisher.zip
 ```
 
 Output:
 
 ```text
 dist\BookPublisher\BookPublisher.exe
+dist\BookPublisher-cli\BookPublisher-cli.exe
+dist\BookPublisher.zip
 ```
+
+The CLI EXE supports a `smoke` subcommand that validates the bundle without
+running the pipeline or calling an API:
+
+```bat
+dist\BookPublisher-cli\BookPublisher-cli.exe smoke
+```
+
+The `exe-build` job in `.github/workflows/ci.yml` runs the full build +
+smoke flow on `windows-latest` on every push and uploads the resulting
+EXEs as a CI artifact — so a broken EXE is caught before customers see it.
 
 ## Skills And Memory
 

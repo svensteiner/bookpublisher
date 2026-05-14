@@ -19,3 +19,79 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Run tests
         run: python -m pytest
+
+  exe-build:
+    # Verifies the customer download path: PyInstaller can package the
+    # app on a fresh Windows-latest runner, the resulting EXE starts
+    # without missing-import errors, and a console-mode smoke run
+    # returns exit code 0. Prevents the #1 refund risk (broken EXE
+    # ships to a customer who has no Python installed locally).
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build + runtime dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Build CLI (console) EXE
+        run: scripts\build_windows_cli.bat
+
+      - name: Build GUI (windowed) EXE
+        run: scripts\build_windows_app.bat
+
+      - name: Verify EXE files exist
+        shell: pwsh
+        run: |
+          $cli = "dist\BookPublisher-cli\BookPublisher-cli.exe"
+          $gui = "dist\BookPublisher\BookPublisher.exe"
+          if (-not (Test-Path $cli)) { throw "CLI EXE missing at $cli" }
+          if (-not (Test-Path $gui)) { throw "GUI EXE missing at $gui" }
+          $cliSize = (Get-Item $cli).Length
+          $guiSize = (Get-Item $gui).Length
+          Write-Host "CLI EXE: $cliSize bytes"
+          Write-Host "GUI EXE: $guiSize bytes"
+          # 5 MB floor — PyInstaller-bundled Python is ~10 MB+ in practice;
+          # anything tiny means the build silently produced an empty stub.
+          if ($cliSize -lt 5000000) { throw "CLI EXE suspiciously small: $cliSize bytes" }
+          if ($guiSize -lt 5000000) { throw "GUI EXE suspiciously small: $guiSize bytes" }
+
+      - name: Smoke-test CLI EXE (no API call, no manuscript)
+        shell: pwsh
+        run: |
+          $output = & dist\BookPublisher-cli\BookPublisher-cli.exe smoke 2>&1
+          $exit = $LASTEXITCODE
+          Write-Host "Exit code: $exit"
+          Write-Host "Output:"
+          Write-Host $output
+          if ($exit -ne 0) { throw "smoke exited with $exit" }
+          if ($output -notmatch "smoke test OK") { throw "smoke output missing OK marker" }
+
+      - name: Smoke-test CLI EXE against beispielbuch (no API key)
+        shell: pwsh
+        run: |
+          # QA mode runs without an API key — exactly what the customer
+          # gets after the very first download. Verifies the whole
+          # heuristic pipeline survives PyInstaller bundling.
+          & dist\BookPublisher-cli\BookPublisher-cli.exe qa --input-path release\beispielbuch
+          if ($LASTEXITCODE -ne 0) { throw "qa returned $LASTEXITCODE" }
+          $summary = "artifacts\beginner_summary.md"
+          if (-not (Test-Path $summary)) { throw "beginner_summary.md missing at $summary" }
+          $content = Get-Content $summary -Raw
+          if ($content.Length -lt 200) { throw "beginner_summary too short: $($content.Length) chars" }
+          Write-Host "beginner_summary.md OK ($($content.Length) chars)"
+
+      - name: Build distribution ZIP
+        run: python -m modules.release_packager --output dist\BookPublisher.zip --exe dist\BookPublisher\BookPublisher.exe
+
+      - name: Upload Windows EXE artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BookPublisher-Windows-EXE
+          path: |
+            dist/BookPublisher/BookPublisher.exe
+            dist/BookPublisher-cli/BookPublisher-cli.exe
+            dist/BookPublisher.zip
+          retention-days: 14

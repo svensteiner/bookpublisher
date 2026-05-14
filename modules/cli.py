@@ -21,7 +21,13 @@ EXIT_MANUSCRIPT_ERROR: int = 3
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Publisher Agent for Amazon KDP nonfiction books.")
-    parser.add_argument("command", choices=["scan", "qa", "round", "review", "cover", "launch", "all"])
+    # ``smoke`` validates the packaged EXE without running real pipeline
+    # work — used by the Windows CI EXE-build job to catch missing imports
+    # or broken config bundling before customers download a broken EXE.
+    parser.add_argument(
+        "command",
+        choices=["scan", "qa", "round", "review", "cover", "launch", "all", "smoke"],
+    )
     parser.add_argument("--input-path", type=Path, default=None)
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--full-review", action="store_true", help="For round: also run LLM reviews and launch assets.")
@@ -34,6 +40,20 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         config = load_config(args.config)
+
+        # Smoke command short-circuits before pipeline construction so it
+        # stays cheap (no SkillRegistry, no AgentMemory). Reaching this
+        # line at all is the actual smoke proof: argparse + load_config
+        # + every transitively imported module (LLMClient, Pipeline,
+        # readers, scoring, …) succeeded.
+        if args.command == "smoke":
+            print("BookPublisher smoke test OK")
+            print(f"  project_root: {config.project_root}")
+            print(f"  default_model: {config.default_model}")
+            print(f"  fallback_model: {config.fallback_model}")
+            print(f"  config_loaded: yes")
+            return EXIT_SUCCESS
+
         input_path = args.input_path or config.default_input_path
         logger = RunLogger(config.project_root / "logs")
         pipeline = PublisherPipeline(config, logger)

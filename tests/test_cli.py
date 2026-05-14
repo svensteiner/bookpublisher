@@ -127,9 +127,71 @@ def test_main_returns_success_when_scan_completes(monkeypatch, tmp_path):
 
 def test_parser_accepts_all_documented_commands():
     parser = build_parser()
-    for command in ["scan", "qa", "round", "review", "cover", "launch", "all"]:
+    for command in ["scan", "qa", "round", "review", "cover", "launch", "all", "smoke"]:
         args = parser.parse_args([command])
         assert args.command == command
+
+
+# --- `smoke` command — packaged-EXE self-test --------------------------------
+
+
+def _make_minimal_config_file(tmp_path: Path) -> Path:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "default_input_path: \"\"\n"
+        "default_model: claude-sonnet-4-6\n"
+        "fallback_model: claude-haiku-4-5-20251001\n",
+        encoding="utf-8",
+    )
+    return cfg
+
+
+def test_smoke_command_exits_zero(tmp_path, capsys):
+    """``smoke`` must succeed without API key, pipeline, or input path."""
+    cfg = _make_minimal_config_file(tmp_path)
+    result = main(["smoke", "--config", str(cfg)])
+    captured = capsys.readouterr()
+    assert result == EXIT_SUCCESS
+    assert "smoke test OK" in captured.out
+    assert "default_model" in captured.out
+    assert "fallback_model" in captured.out
+
+
+def test_smoke_command_returns_config_error_when_config_invalid(monkeypatch, tmp_path):
+    """If ``load_config`` fails on a packaged EXE, smoke surfaces it cleanly."""
+
+    def fake_load_config(_path):
+        raise ConfigError("missing required field")
+
+    monkeypatch.setattr("modules.cli.load_config", fake_load_config)
+    result = main(["smoke"])
+    assert result == EXIT_CONFIG_ERROR
+
+
+def test_smoke_command_does_not_construct_pipeline(monkeypatch, tmp_path, capsys):
+    """``smoke`` must not touch PublisherPipeline — the whole point is to
+    catch packaging issues before any heavy initialisation runs."""
+
+    cfg = _make_minimal_config_file(tmp_path)
+
+    constructed = {"count": 0}
+
+    class _PipelineProbe:
+        def __init__(self, *args, **kwargs):
+            constructed["count"] += 1
+
+    monkeypatch.setattr("modules.cli.PublisherPipeline", _PipelineProbe)
+    result = main(["smoke", "--config", str(cfg)])
+    assert result == EXIT_SUCCESS
+    # PublisherPipeline is the heavy ctor (SkillRegistry, AgentMemory).
+    # smoke must short-circuit before construction.
+    assert constructed["count"] == 0
+
+
+def test_smoke_command_is_listed_in_parser_choices():
+    parser = build_parser()
+    args = parser.parse_args(["smoke"])
+    assert args.command == "smoke"
 
 
 def test_readme_documents_every_exit_code():
