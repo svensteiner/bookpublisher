@@ -10,6 +10,7 @@ from modules.chapter_arc import (
     render_arc_report_markdown,
 )
 from modules.chapters import (
+    BalanceThresholds,
     ChapterReport,
     build_chapter_report,
     extract_docx_chapters,
@@ -205,10 +206,16 @@ def launch_content(project: BookProject, config: AppConfig, llm: LLMClient) -> s
     )
 
 
-def chapter_review(project: BookProject) -> tuple[str, dict]:
+def chapter_review(
+    project: BookProject,
+    *,
+    balance_thresholds: BalanceThresholds | None = None,
+) -> tuple[str, dict]:
     """Per-chapter heuristic review. Returns (markdown, json_payload).
 
     Pure-Python; safe to call in QA mode without an LLM API key.
+    ``balance_thresholds`` lets the pipeline pass author-configured
+    cutoffs for lesson-style nonfiction.
     """
 
     if not project.manuscript:
@@ -216,7 +223,7 @@ def chapter_review(project: BookProject) -> tuple[str, dict]:
         title = project.title or project.project_id
         return render_chapter_report_markdown(title, empty), empty.to_json()
     chapters = extract_docx_chapters(project.manuscript)
-    report = build_chapter_report(chapters)
+    report = build_chapter_report(chapters, balance_thresholds=balance_thresholds)
     title = project.title or project.project_id
     return render_chapter_report_markdown(title, report), report.to_json()
 

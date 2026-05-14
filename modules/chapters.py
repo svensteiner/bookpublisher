@@ -31,6 +31,40 @@ OVERSIZED_FACTOR: float = 3.0
 UNDERSIZED_FACTOR: float = 0.3
 BALANCE_MIN_CHAPTERS: int = 3
 
+
+@dataclass(frozen=True)
+class BalanceThresholds:
+    """Tunable parameters for chapter-balance outlier detection.
+
+    Defaults match the module-level constants used historically — pass
+    a custom instance when authors write lesson-style nonfiction (many
+    short chapters) where the legacy 3.0×/0.3× thresholds would flag
+    nearly every chapter as undersized.
+    """
+
+    oversized_factor: float = OVERSIZED_FACTOR
+    undersized_factor: float = UNDERSIZED_FACTOR
+    min_chapters: int = BALANCE_MIN_CHAPTERS
+
+
+DEFAULT_BALANCE_THRESHOLDS = BalanceThresholds()
+
+
+def balance_thresholds_from_app(app_config: Any) -> BalanceThresholds:
+    """Build BalanceThresholds from an AppConfig — single wiring point."""
+
+    return BalanceThresholds(
+        oversized_factor=float(
+            getattr(app_config, "balance_oversized_factor", OVERSIZED_FACTOR)
+        ),
+        undersized_factor=float(
+            getattr(app_config, "balance_undersized_factor", UNDERSIZED_FACTOR)
+        ),
+        min_chapters=int(
+            getattr(app_config, "balance_min_chapters", BALANCE_MIN_CHAPTERS)
+        ),
+    )
+
 # Status → unified score-badge emoji mapping. Single source of truth in
 # modules.scoring so all reports stay in lockstep when the scheme changes.
 _STATUS_EMOJI: dict[str, str] = {
@@ -359,22 +393,35 @@ def _balance_fix(chapter: Chapter, kind: str, ratio: float) -> str:
 def analyze_chapter_balance(
     chapters: list[Chapter],
     *,
-    oversized_factor: float = OVERSIZED_FACTOR,
-    undersized_factor: float = UNDERSIZED_FACTOR,
-    min_chapters: int = BALANCE_MIN_CHAPTERS,
+    thresholds: BalanceThresholds | None = None,
+    oversized_factor: float | None = None,
+    undersized_factor: float | None = None,
+    min_chapters: int | None = None,
 ) -> ChapterBalanceReport:
     """Detect chapters whose word count diverges sharply from the median.
 
     Pure function: never mutates ``chapters``. Returns an empty report
-    when there are fewer than ``min_chapters`` real chapters, when the
-    median word count is zero, or when no outliers are found. Outliers
-    are returned in deterministic order: oversized by decreasing word
-    count (split the longest first), undersized by ascending word count
-    (merge the shortest first). Ties break by chapter index.
+    when there are fewer than ``thresholds.min_chapters`` real chapters,
+    when the median word count is zero, or when no outliers are found.
+    Outliers are returned in deterministic order: oversized by decreasing
+    word count (split the longest first), undersized by ascending word
+    count (merge the shortest first). Ties break by chapter index.
+
+    Legacy single-factor kwargs ``oversized_factor``/``undersized_factor``/
+    ``min_chapters`` remain accepted and override the corresponding
+    ``thresholds`` fields when explicitly provided — preserves backwards
+    compatibility for in-tree callers.
     """
 
+    base = thresholds or DEFAULT_BALANCE_THRESHOLDS
+    eff_oversized = oversized_factor if oversized_factor is not None else base.oversized_factor
+    eff_undersized = (
+        undersized_factor if undersized_factor is not None else base.undersized_factor
+    )
+    eff_min_chapters = min_chapters if min_chapters is not None else base.min_chapters
+
     real = [c for c in chapters if c.word_count > 0]
-    if len(real) < min_chapters:
+    if len(real) < eff_min_chapters:
         return ChapterBalanceReport(median_word_count=0)
     median = int(statistics.median(c.word_count for c in real))
     if median <= 0:
@@ -382,8 +429,8 @@ def analyze_chapter_balance(
 
     oversized: list[ChapterBalanceOutlier] = []
     undersized: list[ChapterBalanceOutlier] = []
-    upper = median * oversized_factor
-    lower = median * undersized_factor
+    upper = median * eff_oversized
+    lower = median * eff_undersized
     for chap in real:
         ratio = round(chap.word_count / median, 1)
         if chap.word_count > upper:
@@ -453,7 +500,11 @@ def top_weakest_chapters(report: ChapterReport, limit: int = 3) -> list[ChapterS
     return ordered[: min(limit, len(ordered))]
 
 
-def build_chapter_report(chapters: list[Chapter]) -> ChapterReport:
+def build_chapter_report(
+    chapters: list[Chapter],
+    *,
+    balance_thresholds: BalanceThresholds | None = None,
+) -> ChapterReport:
     """Score every chapter and aggregate into a ChapterReport."""
 
     if not chapters:
@@ -467,7 +518,7 @@ def build_chapter_report(chapters: list[Chapter]) -> ChapterReport:
     scores = [score_chapter(ch) for ch in chapters]
     avg = round(sum(s.overall for s in scores) / len(scores))
     weakest = min(scores, key=lambda s: s.overall)
-    balance = analyze_chapter_balance(chapters)
+    balance = analyze_chapter_balance(chapters, thresholds=balance_thresholds)
     fixes = [s.fix for s in scores if s.status != "READY"]
     fixes.extend(o.fix for o in balance.oversized)
     fixes.extend(o.fix for o in balance.undersized)

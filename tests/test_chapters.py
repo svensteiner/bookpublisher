@@ -423,3 +423,217 @@ def test_chapter_report_to_json_omits_balance_when_none():
     )
     payload = report.to_json()
     assert "balance" not in payload
+
+
+# --- Configurable balance thresholds (lesson-style nonfiction support) ---
+
+
+def test_default_balance_thresholds_match_legacy_constants():
+    from modules.chapters import (
+        BALANCE_MIN_CHAPTERS,
+        DEFAULT_BALANCE_THRESHOLDS,
+        OVERSIZED_FACTOR,
+        UNDERSIZED_FACTOR,
+    )
+
+    assert DEFAULT_BALANCE_THRESHOLDS.oversized_factor == OVERSIZED_FACTOR
+    assert DEFAULT_BALANCE_THRESHOLDS.undersized_factor == UNDERSIZED_FACTOR
+    assert DEFAULT_BALANCE_THRESHOLDS.min_chapters == BALANCE_MIN_CHAPTERS
+
+
+def test_balance_thresholds_is_frozen():
+    from modules.chapters import BalanceThresholds
+
+    cfg = BalanceThresholds()
+    try:
+        cfg.oversized_factor = 5.0  # type: ignore[misc]
+    except Exception:
+        return
+    raise AssertionError("BalanceThresholds should be frozen")
+
+
+def test_custom_oversized_factor_flags_smaller_outliers():
+    """Tighter factor (2.0×) flags chapters that 3.0× would let pass."""
+    from modules.chapters import BalanceThresholds, analyze_chapter_balance
+
+    chapters = [
+        _chapter(1, 1000),
+        _chapter(2, 1000),
+        _chapter(3, 2500),  # 2.5× median — flagged at 2.0× but not at 3.0×
+        _chapter(4, 1000),
+    ]
+    default_report = analyze_chapter_balance(chapters)
+    tight_report = analyze_chapter_balance(
+        chapters, thresholds=BalanceThresholds(oversized_factor=2.0)
+    )
+
+    default_indexes = {o.index for o in default_report.oversized}
+    tight_indexes = {o.index for o in tight_report.oversized}
+    assert 3 not in default_indexes
+    assert 3 in tight_indexes
+
+
+def test_custom_undersized_factor_skips_lesson_style_chapters():
+    """Lesson-style nonfiction: 0.5× factor lets micro-lessons pass MERGE-gate."""
+    from modules.chapters import BalanceThresholds, analyze_chapter_balance
+
+    # Lesson-style book: 6 chapters at ~600 words each, one at 1500 words.
+    chapters = [_chapter(i, 600) for i in range(1, 7)]
+    chapters.append(_chapter(7, 1500))  # boosts median up
+
+    default_report = analyze_chapter_balance(chapters)
+    relaxed_report = analyze_chapter_balance(
+        chapters,
+        thresholds=BalanceThresholds(undersized_factor=0.5),
+    )
+    # Default 0.3× of 600 (the lesson median) is 180 words — short chapters
+    # survive. But with relaxed factor 0.5, what would have been flagged
+    # short stays unflagged. Build a stricter scenario:
+    chapters2 = [
+        _chapter(1, 1000),
+        _chapter(2, 1000),
+        _chapter(3, 200),  # 0.2× median — flagged at 0.3× AND at 0.5×
+        _chapter(4, 400),  # 0.4× median — flagged at 0.5× only
+        _chapter(5, 1000),
+    ]
+    default2 = analyze_chapter_balance(chapters2)
+    relaxed2 = analyze_chapter_balance(
+        chapters2,
+        thresholds=BalanceThresholds(undersized_factor=0.5),
+    )
+    default_idx = {o.index for o in default2.undersized}
+    relaxed_idx = {o.index for o in relaxed2.undersized}
+    assert default_idx == {3}
+    assert relaxed_idx == {3, 4}
+    # Smoke-check the lesson-style scenario doesn't break.
+    assert default_report.median_word_count > 0
+    assert relaxed_report.median_word_count > 0
+
+
+def test_custom_min_chapters_bypasses_small_book_gate():
+    """A 2-chapter book ordinarily skips balance analysis (median not meaningful)."""
+    from modules.chapters import BalanceThresholds, analyze_chapter_balance
+
+    chapters = [_chapter(1, 1000), _chapter(2, 4000)]
+    default_report = analyze_chapter_balance(chapters)
+    bypassed = analyze_chapter_balance(
+        chapters, thresholds=BalanceThresholds(min_chapters=2)
+    )
+
+    # Default min_chapters=3 returns an empty report for a 2-chapter book.
+    assert default_report.median_word_count == 0
+    # Lowering the floor to 2 enables analysis.
+    assert bypassed.median_word_count > 0
+
+
+def test_legacy_kwargs_override_thresholds_dataclass():
+    """Explicit factor/min_chapters kwargs still trump the thresholds object."""
+    from modules.chapters import BalanceThresholds, analyze_chapter_balance
+
+    chapters = [
+        _chapter(1, 1000),
+        _chapter(2, 1000),
+        _chapter(3, 2500),
+        _chapter(4, 1000),
+    ]
+    # Thresholds says 3.0×, but explicit kwarg says 2.0× → kwarg wins.
+    report = analyze_chapter_balance(
+        chapters,
+        thresholds=BalanceThresholds(oversized_factor=3.0),
+        oversized_factor=2.0,
+    )
+    assert any(o.index == 3 for o in report.oversized)
+
+
+def test_build_chapter_report_propagates_thresholds():
+    from modules.chapters import BalanceThresholds, build_chapter_report
+
+    chapters = [
+        _chapter(1, 1000),
+        _chapter(2, 1000),
+        _chapter(3, 2500),
+        _chapter(4, 1000),
+    ]
+    relaxed = build_chapter_report(chapters)  # default 3.0× → no flag
+    tight = build_chapter_report(
+        chapters, balance_thresholds=BalanceThresholds(oversized_factor=2.0)
+    )
+
+    assert relaxed.balance is not None
+    assert tight.balance is not None
+    assert not any(o.index == 3 for o in relaxed.balance.oversized)
+    assert any(o.index == 3 for o in tight.balance.oversized)
+
+
+def test_balance_thresholds_from_app_reads_fields():
+    from modules.chapters import balance_thresholds_from_app
+    from modules.config import AppConfig
+    from pathlib import Path
+
+    cfg = AppConfig(
+        project_root=Path("."),
+        default_input_path=Path("."),
+        default_model="x",
+        fallback_model="y",
+        balance_oversized_factor=2.5,
+        balance_undersized_factor=0.4,
+        balance_min_chapters=5,
+    )
+    thresholds = balance_thresholds_from_app(cfg)
+    assert thresholds.oversized_factor == 2.5
+    assert thresholds.undersized_factor == 0.4
+    assert thresholds.min_chapters == 5
+
+
+def test_load_config_reads_balance_keys(tmp_path):
+    from modules.config import load_config
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "default_input_path: \"\"\n"
+        "default_model: claude-sonnet-4-6\n"
+        "fallback_model: claude-haiku-4-5-20251001\n"
+        "balance_oversized_factor: 2.0\n"
+        "balance_undersized_factor: 0.5\n"
+        "balance_min_chapters: 5\n",
+        encoding="utf-8",
+    )
+    loaded = load_config(cfg)
+    assert loaded.balance_oversized_factor == 2.0
+    assert loaded.balance_undersized_factor == 0.5
+    assert loaded.balance_min_chapters == 5
+
+
+def test_load_config_defaults_balance_keys(tmp_path):
+    from modules.config import load_config
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "default_input_path: \"\"\n"
+        "default_model: claude-sonnet-4-6\n"
+        "fallback_model: claude-haiku-4-5-20251001\n",
+        encoding="utf-8",
+    )
+    loaded = load_config(cfg)
+    assert loaded.balance_oversized_factor == 3.0
+    assert loaded.balance_undersized_factor == 0.3
+    assert loaded.balance_min_chapters == 3
+
+
+def test_load_config_clamps_invalid_balance_values(tmp_path):
+    from modules.config import load_config
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "default_input_path: \"\"\n"
+        "default_model: claude-sonnet-4-6\n"
+        "fallback_model: claude-haiku-4-5-20251001\n"
+        "balance_oversized_factor: 0.5\n"  # below low-bound 1.1
+        "balance_undersized_factor: 1.5\n"  # above high-bound 0.9
+        "balance_min_chapters: 1\n",  # below floor 2
+        encoding="utf-8",
+    )
+    loaded = load_config(cfg)
+    assert loaded.balance_oversized_factor == 1.1
+    assert loaded.balance_undersized_factor == 0.9
+    assert loaded.balance_min_chapters == 2

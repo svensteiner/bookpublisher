@@ -25,6 +25,14 @@ sample_scan_max_sections: 8
 sample_scan_section_target_words: 350
 sample_scan_min_section_words: 90
 
+# Chapter-balance outlier detection. SPLIT-flag at >median*oversized_factor,
+# MERGE-flag at <median*undersized_factor. Lesson-style nonfiction with
+# ~30 short chapters should set `oversized_factor: 2.0` and
+# `undersized_factor: 0.5` so micro-lessons don't trigger false MERGE-flags.
+balance_oversized_factor: 3.0
+balance_undersized_factor: 0.3
+balance_min_chapters: 3
+
 read_only: true
 artifact_mirror_single_project: true
 skills_directory: skills

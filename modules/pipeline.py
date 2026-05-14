@@ -9,6 +9,7 @@ from modules.amazon_html import (
     render_amazon_description_report_markdown,
 )
 from modules.artifacts import ArtifactWriter
+from modules.chapters import balance_thresholds_from_app
 from modules.competitive_positioning import (
     PositioningReport,
     build_positioning_report,
@@ -844,7 +845,10 @@ class PublisherPipeline:
             chapter_json: dict | None = None
             chapter_md: str | None = None
             try:
-                chapter_md, chapter_json = chapter_review(project)
+                chapter_md, chapter_json = chapter_review(
+                    project,
+                    balance_thresholds=balance_thresholds_from_app(self.config),
+                )
                 chapter_titles = [
                     str(c.get("title") or "")
                     for c in (chapter_json.get("chapters") or [])

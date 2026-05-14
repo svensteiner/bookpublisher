@@ -56,6 +56,14 @@ class AppConfig:
     sample_scan_max_sections: int = 8
     sample_scan_section_target_words: int = 350
     sample_scan_min_section_words: int = 90
+    # Chapter-balance outlier detection. A chapter is flagged as SPLIT
+    # when its word count > median * oversized_factor, as MERGE when
+    # < median * undersized_factor. Lesson-style nonfiction (~30 short
+    # chapters) should lower oversized_factor to ~2.0 and raise
+    # undersized_factor to ~0.5 so micro-lessons don't get flagged.
+    balance_oversized_factor: float = 3.0
+    balance_undersized_factor: float = 0.3
+    balance_min_chapters: int = 3
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -101,5 +109,8 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         sample_scan_max_sections=max(1, int(data.get("sample_scan_max_sections", 8))),
         sample_scan_section_target_words=max(20, int(data.get("sample_scan_section_target_words", 350))),
         sample_scan_min_section_words=max(10, int(data.get("sample_scan_min_section_words", 90))),
+        balance_oversized_factor=_clamp_float(data.get("balance_oversized_factor", 3.0), low=1.1, high=20.0),
+        balance_undersized_factor=_clamp_float(data.get("balance_undersized_factor", 0.3), low=0.01, high=0.9),
+        balance_min_chapters=max(2, int(data.get("balance_min_chapters", 3))),
         raw=data,
     )
