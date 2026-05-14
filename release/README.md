@@ -38,7 +38,12 @@ Vor jedem neuen Release:
 2. `metadata.md` prüfen — wenn sich Titel/Untertitel/Beschreibung
    geändert haben, anpassen.
 3. `tests/test_customer_journey.py` ausführen → muss grün sein.
-4. ZIP bauen (siehe `build_exe.bat` für den .exe-Build).
+4. EXE bauen: `scripts\build_windows_app.bat`.
+5. Release-ZIP bauen: `scripts\build_release_zip.bat`. Das Skript
+   schreibt `dist\BookPublisher.zip` mit der EXE (falls vorhanden),
+   `beispielbuch/`, `BookPublisher starten.bat` und einer kurzen
+   `LIES_MICH.txt` auf Top-Level. Genau diese Datei wandert dann
+   auf die Homepage.
 
 Der Customer-Journey-Test in `tests/test_customer_journey.py` läuft
 gegen genau diesen Ordner und stellt sicher, dass der Kunde nach
