@@ -16,6 +16,15 @@ class ConfigError(RuntimeError):
     pass
 
 
+def _clamp_float(value: Any, *, low: float, high: float) -> float:
+    """Coerce ``value`` to float and clamp into ``[low, high]``."""
+    try:
+        coerced = float(value)
+    except (TypeError, ValueError):
+        coerced = low
+    return max(low, min(high, coerced))
+
+
 @dataclass(frozen=True)
 class AppConfig:
     project_root: Path
@@ -39,6 +48,14 @@ class AppConfig:
     # Base delay in seconds between retries; doubled per attempt
     # (exponential backoff). Set to 0 in tests to avoid real sleeps.
     llm_retry_backoff_seconds: float = 0.5
+    # First-N%-Deep-Scan tuning. Short nonfiction books (<25k words)
+    # benefit from a higher ratio and lower min-section-words so the
+    # Kindle-Sample diagnostic gets enough sections to be meaningful.
+    sample_scan_ratio: float = 0.10
+    sample_scan_max_ratio: float = 0.14
+    sample_scan_max_sections: int = 8
+    sample_scan_section_target_words: int = 350
+    sample_scan_min_section_words: int = 90
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -79,5 +96,10 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         supported_files=normalized_supported,
         llm_retry_attempts=max(1, int(data.get("llm_retry_attempts", 2))),
         llm_retry_backoff_seconds=max(0.0, float(data.get("llm_retry_backoff_seconds", 0.5))),
+        sample_scan_ratio=_clamp_float(data.get("sample_scan_ratio", 0.10), low=0.01, high=1.0),
+        sample_scan_max_ratio=_clamp_float(data.get("sample_scan_max_ratio", 0.14), low=0.01, high=1.0),
+        sample_scan_max_sections=max(1, int(data.get("sample_scan_max_sections", 8))),
+        sample_scan_section_target_words=max(20, int(data.get("sample_scan_section_target_words", 350))),
+        sample_scan_min_section_words=max(10, int(data.get("sample_scan_min_section_words", 90))),
         raw=data,
     )

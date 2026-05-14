@@ -49,7 +49,11 @@ from modules.rewrites import build_rewrite_report, render_rewrite_report_markdow
 from modules.round_delta import RoundDelta, render_round_delta_markdown
 from modules.rounds import make_round_id, snapshot_round
 from modules.run_logger import RunLogger
-from modules.sample_scan import build_sample_scan_report, render_sample_scan_markdown
+from modules.sample_scan import (
+    build_sample_scan_report,
+    render_sample_scan_markdown,
+    sample_scan_config_from_app,
+)
 from modules.score_history import (
     append_score_history,
     load_score_history,
@@ -856,7 +860,10 @@ class PublisherPipeline:
             top_chapter_balance = _top_chapter_balance_payload(chapter_json)
             sample_json: dict | None = None
             try:
-                sample_scan = build_sample_scan_report(project)
+                sample_scan = build_sample_scan_report(
+                    project,
+                    config=sample_scan_config_from_app(self.config),
+                )
                 sample_json = sample_scan.to_json()
             except RuntimeError as exc:
                 sample_scan = None

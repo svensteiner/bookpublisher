@@ -47,6 +47,42 @@ SECTION_TARGET_WORDS: int = 350
 MIN_SECTION_WORDS: int = 90
 MAX_SECTIONS: int = 8
 
+
+@dataclass(frozen=True)
+class SampleScanConfig:
+    """Tunable parameters for the First-N%-Deep-Scan.
+
+    Defaults match the module-level constants used historically. Short
+    nonfiction (e.g. <25k words) benefits from a higher ``sample_ratio``
+    and lower ``min_section_words`` so the Kindle-Sample diagnostic gets
+    enough sections to be meaningful — power-users tune via config.yaml.
+    """
+
+    sample_ratio: float = SAMPLE_RATIO
+    max_ratio: float = SAMPLE_MAX_RATIO
+    max_sections: int = MAX_SECTIONS
+    section_target_words: int = SECTION_TARGET_WORDS
+    min_section_words: int = MIN_SECTION_WORDS
+
+
+DEFAULT_SAMPLE_SCAN_CONFIG = SampleScanConfig()
+
+
+def sample_scan_config_from_app(app_config: Any) -> SampleScanConfig:
+    """Build a SampleScanConfig from an AppConfig — single wiring point."""
+
+    return SampleScanConfig(
+        sample_ratio=float(getattr(app_config, "sample_scan_ratio", SAMPLE_RATIO)),
+        max_ratio=float(getattr(app_config, "sample_scan_max_ratio", SAMPLE_MAX_RATIO)),
+        max_sections=int(getattr(app_config, "sample_scan_max_sections", MAX_SECTIONS)),
+        section_target_words=int(
+            getattr(app_config, "sample_scan_section_target_words", SECTION_TARGET_WORDS)
+        ),
+        min_section_words=int(
+            getattr(app_config, "sample_scan_min_section_words", MIN_SECTION_WORDS)
+        ),
+    )
+
 RISK_LABELS: dict[str, str] = {
     "READY": "WEITERLESEN",
     "REVIEW": "GRENZWERTIG",
@@ -217,6 +253,8 @@ def _take_sample_paragraphs(
 
 def _bucket_into_sections(
     paragraphs: list[dict[str, Any]],
+    *,
+    config: SampleScanConfig = DEFAULT_SAMPLE_SCAN_CONFIG,
 ) -> list[SampleSection]:
     """Group paragraphs into sample sections by heading or word window."""
 
@@ -254,7 +292,7 @@ def _bucket_into_sections(
             }
         words = _word_count(text)
         # Split very long heading-less stretches into target-sized windows.
-        if current["word_count"] >= SECTION_TARGET_WORDS:
+        if current["word_count"] >= config.section_target_words:
             _flush()
             current = {
                 "label": f"Abschnitt ab Wort {running}",
@@ -272,16 +310,16 @@ def _bucket_into_sections(
     # a heading-only section of, say, 8 words.
     merged: list[dict[str, Any]] = []
     for bucket in buckets:
-        if bucket["word_count"] < MIN_SECTION_WORDS and merged:
+        if bucket["word_count"] < config.min_section_words and merged:
             merged[-1]["body_parts"].extend(bucket["body_parts"])
             merged[-1]["word_count"] += bucket["word_count"]
         else:
             merged.append(bucket)
 
     # Cap the number of sections to keep the markdown digestible.
-    if len(merged) > MAX_SECTIONS:
-        head = merged[: MAX_SECTIONS - 1]
-        tail = merged[MAX_SECTIONS - 1 :]
+    if len(merged) > config.max_sections:
+        head = merged[: config.max_sections - 1]
+        tail = merged[config.max_sections - 1 :]
         combined_parts: list[str] = []
         combined_words = 0
         for bucket in tail:
@@ -315,19 +353,26 @@ def _bucket_into_sections(
 def extract_sample_sections(
     paragraphs: Iterable[dict[str, Any]],
     *,
-    sample_ratio: float = SAMPLE_RATIO,
-    max_ratio: float = SAMPLE_MAX_RATIO,
+    config: SampleScanConfig = DEFAULT_SAMPLE_SCAN_CONFIG,
+    sample_ratio: float | None = None,
+    max_ratio: float | None = None,
 ) -> tuple[list[SampleSection], int, int]:
-    """Return ``(sections, total_words, sample_words)`` for a paragraph stream."""
+    """Return ``(sections, total_words, sample_words)`` for a paragraph stream.
+
+    ``sample_ratio`` / ``max_ratio`` are legacy kwargs preserved for any
+    in-tree callers — when both are ``None``, ``config`` is used.
+    """
 
     paras = [p for p in paragraphs if (p.get("text") or "").strip()]
     total_words = _total_word_count(paras)
     if total_words == 0:
         return [], 0, 0
-    target = max(MIN_SECTION_WORDS, int(total_words * sample_ratio))
-    ceiling = max(target, int(total_words * max_ratio))
+    effective_ratio = sample_ratio if sample_ratio is not None else config.sample_ratio
+    effective_max_ratio = max_ratio if max_ratio is not None else config.max_ratio
+    target = max(config.min_section_words, int(total_words * effective_ratio))
+    ceiling = max(target, int(total_words * effective_max_ratio))
     sample = _take_sample_paragraphs(paras, target_words=target, max_words=ceiling)
-    sections = _bucket_into_sections(sample)
+    sections = _bucket_into_sections(sample, config=config)
     sample_words = sum(s.word_count for s in sections)
     return sections, total_words, sample_words
 
@@ -456,10 +501,12 @@ def score_section(section: SampleSection) -> SampleSectionScore:
 
 def build_sample_scan_report_from_paragraphs(
     paragraphs: Iterable[dict[str, Any]],
+    *,
+    config: SampleScanConfig = DEFAULT_SAMPLE_SCAN_CONFIG,
 ) -> SampleScanReport:
     """Pure-Python entry point: build a SampleScanReport from a paragraph stream."""
 
-    sections, total_words, sample_words = extract_sample_sections(paragraphs)
+    sections, total_words, sample_words = extract_sample_sections(paragraphs, config=config)
     if not sections:
         return SampleScanReport(
             manuscript_word_count=total_words,
@@ -504,8 +551,12 @@ def _docx_paragraph_stream(path: Any) -> list[dict[str, Any]]:
     return paragraphs
 
 
-def build_sample_scan_report(project: BookProject) -> SampleScanReport:
-    """Run the First-10%-Deep-Scan against a project's manuscript."""
+def build_sample_scan_report(
+    project: BookProject,
+    *,
+    config: SampleScanConfig = DEFAULT_SAMPLE_SCAN_CONFIG,
+) -> SampleScanReport:
+    """Run the First-N%-Deep-Scan against a project's manuscript."""
 
     if not project.manuscript:
         return SampleScanReport(
@@ -519,7 +570,7 @@ def build_sample_scan_report(project: BookProject) -> SampleScanReport:
             fixes=[],
         )
     paragraphs = _docx_paragraph_stream(project.manuscript)
-    return build_sample_scan_report_from_paragraphs(paragraphs)
+    return build_sample_scan_report_from_paragraphs(paragraphs, config=config)
 
 
 _STATUS_EMOJI: dict[str, str] = {

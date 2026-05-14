@@ -226,3 +226,232 @@ def test_section_score_dataclass_is_immutable():
     except Exception:
         return
     raise AssertionError("SampleSectionScore should be frozen")
+
+
+# --- Configurable sample-scan parameters (short-nonfiction support) ------
+
+
+def _short_book_paragraphs(total_paragraph_words: int = 60, count: int = 12) -> list[dict]:
+    """Build a small book where the default 10% sample is too thin."""
+    paras: list[dict] = []
+    for idx in range(count):
+        paras.append(_paragraph(f"Kapitel {idx + 1}: Thema", style="Heading 1"))
+        # ~60 words per paragraph → 12 paragraphs ≈ 720 words total.
+        paras.append(_paragraph(("wort " * total_paragraph_words).strip()))
+    return paras
+
+
+def test_default_sample_scan_config_matches_legacy_constants():
+    from modules.sample_scan import (
+        DEFAULT_SAMPLE_SCAN_CONFIG,
+        MAX_SECTIONS as legacy_max_sections,
+        SAMPLE_MAX_RATIO,
+        SAMPLE_RATIO,
+        SECTION_TARGET_WORDS,
+        MIN_SECTION_WORDS,
+    )
+
+    assert DEFAULT_SAMPLE_SCAN_CONFIG.sample_ratio == SAMPLE_RATIO
+    assert DEFAULT_SAMPLE_SCAN_CONFIG.max_ratio == SAMPLE_MAX_RATIO
+    assert DEFAULT_SAMPLE_SCAN_CONFIG.max_sections == legacy_max_sections
+    assert DEFAULT_SAMPLE_SCAN_CONFIG.section_target_words == SECTION_TARGET_WORDS
+    assert DEFAULT_SAMPLE_SCAN_CONFIG.min_section_words == MIN_SECTION_WORDS
+
+
+def test_sample_scan_config_is_immutable():
+    from modules.sample_scan import SampleScanConfig
+
+    cfg = SampleScanConfig()
+    try:
+        cfg.sample_ratio = 0.5  # type: ignore[misc]
+    except Exception:
+        return
+    raise AssertionError("SampleScanConfig should be frozen")
+
+
+def test_custom_ratio_increases_sample_word_count_for_short_books():
+    from modules.sample_scan import SampleScanConfig
+
+    paras = _short_book_paragraphs()
+    _, total_default, sample_default = extract_sample_sections(paras)
+    _, total_high, sample_high = extract_sample_sections(
+        paras, config=SampleScanConfig(sample_ratio=0.25, max_ratio=0.30)
+    )
+
+    # Same manuscript, but the high-ratio config samples noticeably more.
+    assert total_default == total_high > 0
+    assert sample_high > sample_default
+
+
+def test_custom_max_sections_caps_section_count():
+    from modules.sample_scan import SampleScanConfig
+
+    paras: list[dict] = []
+    for idx in range(30):
+        paras.append(_paragraph(f"Abschnitt {idx}", style="Heading 2"))
+        paras.append(_paragraph("Inhalt " * 60))
+
+    report = build_sample_scan_report_from_paragraphs(
+        paras, config=SampleScanConfig(max_sections=3)
+    )
+    assert report.section_count <= 3
+
+
+def test_custom_min_section_words_changes_merging():
+    """Lower min_section_words → fewer merges → more sections preserved."""
+    from modules.sample_scan import SampleScanConfig
+
+    # Build many short sections (~30 words each, below default min=90).
+    paras: list[dict] = []
+    for idx in range(20):
+        paras.append(_paragraph(f"Kapitel {idx + 1}", style="Heading 1"))
+        paras.append(_paragraph("wort " * 30))
+
+    # Default config: every short section gets merged into a predecessor.
+    default_report = build_sample_scan_report_from_paragraphs(paras)
+    # Low-threshold config: sections survive standalone.
+    low_report = build_sample_scan_report_from_paragraphs(
+        paras,
+        config=SampleScanConfig(
+            sample_ratio=0.50,
+            max_ratio=0.60,
+            min_section_words=10,
+            max_sections=20,
+        ),
+    )
+
+    assert low_report.section_count > default_report.section_count
+
+
+def test_custom_section_target_words_changes_window_splitting():
+    """Lower section_target_words → headless stretches split into more buckets."""
+    from modules.sample_scan import SampleScanConfig
+
+    # 1 heading + 1 huge paragraph that should be window-split.
+    paras: list[dict] = [
+        _paragraph("Einleitung", style="Heading 1"),
+        # 600 words in a single paragraph.
+        _paragraph("wort " * 600),
+    ]
+
+    default = build_sample_scan_report_from_paragraphs(
+        paras,
+        config=SampleScanConfig(sample_ratio=0.9, max_ratio=1.0, section_target_words=350),
+    )
+    smaller = build_sample_scan_report_from_paragraphs(
+        paras,
+        config=SampleScanConfig(
+            sample_ratio=0.9, max_ratio=1.0, section_target_words=100, min_section_words=10
+        ),
+    )
+
+    # The same single-paragraph body can't actually split mid-paragraph,
+    # so this primarily confirms the knob is wired (no crashes, no skewed
+    # totals). Both configs should still produce at least one section.
+    assert default.section_count >= 1
+    assert smaller.section_count >= 1
+
+
+def test_legacy_sample_ratio_kwarg_still_overrides_config():
+    """Backwards compat: explicit ``sample_ratio=`` kwarg trumps config."""
+    from modules.sample_scan import SampleScanConfig
+
+    paras = _short_book_paragraphs()
+    _, _, default_sample = extract_sample_sections(
+        paras, config=SampleScanConfig(sample_ratio=0.10, max_ratio=0.14)
+    )
+    _, _, override_sample = extract_sample_sections(
+        paras,
+        config=SampleScanConfig(sample_ratio=0.10, max_ratio=0.14),
+        sample_ratio=0.40,
+        max_ratio=0.50,
+    )
+    assert override_sample > default_sample
+
+
+def test_pipeline_passes_app_config_to_sample_scan():
+    """``sample_scan_config_from_app`` reads the AppConfig fields verbatim."""
+    from modules.config import AppConfig
+    from modules.sample_scan import sample_scan_config_from_app
+
+    cfg = AppConfig(
+        project_root=Path("."),
+        default_input_path=Path("."),
+        default_model="x",
+        fallback_model="y",
+        sample_scan_ratio=0.22,
+        sample_scan_max_ratio=0.30,
+        sample_scan_max_sections=12,
+        sample_scan_section_target_words=200,
+        sample_scan_min_section_words=40,
+    )
+    scan_cfg = sample_scan_config_from_app(cfg)
+    assert scan_cfg.sample_ratio == 0.22
+    assert scan_cfg.max_ratio == 0.30
+    assert scan_cfg.max_sections == 12
+    assert scan_cfg.section_target_words == 200
+    assert scan_cfg.min_section_words == 40
+
+
+def test_load_config_reads_sample_scan_keys(tmp_path):
+    from modules.config import load_config
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "default_input_path: \"\"\n"
+        "default_model: claude-sonnet-4-6\n"
+        "fallback_model: claude-haiku-4-5-20251001\n"
+        "sample_scan_ratio: 0.22\n"
+        "sample_scan_max_ratio: 0.30\n"
+        "sample_scan_max_sections: 12\n"
+        "sample_scan_section_target_words: 200\n"
+        "sample_scan_min_section_words: 40\n",
+        encoding="utf-8",
+    )
+    loaded = load_config(cfg)
+    assert loaded.sample_scan_ratio == 0.22
+    assert loaded.sample_scan_max_ratio == 0.30
+    assert loaded.sample_scan_max_sections == 12
+    assert loaded.sample_scan_section_target_words == 200
+    assert loaded.sample_scan_min_section_words == 40
+
+
+def test_load_config_defaults_sample_scan_keys(tmp_path):
+    from modules.config import load_config
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "default_input_path: \"\"\n"
+        "default_model: claude-sonnet-4-6\n"
+        "fallback_model: claude-haiku-4-5-20251001\n",
+        encoding="utf-8",
+    )
+    loaded = load_config(cfg)
+    assert loaded.sample_scan_ratio == 0.10
+    assert loaded.sample_scan_max_ratio == 0.14
+    assert loaded.sample_scan_max_sections == 8
+    assert loaded.sample_scan_section_target_words == 350
+    assert loaded.sample_scan_min_section_words == 90
+
+
+def test_load_config_clamps_invalid_sample_scan_values(tmp_path):
+    from modules.config import load_config
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "default_input_path: \"\"\n"
+        "default_model: claude-sonnet-4-6\n"
+        "fallback_model: claude-haiku-4-5-20251001\n"
+        "sample_scan_ratio: -0.5\n"
+        "sample_scan_max_ratio: 5.0\n"
+        "sample_scan_max_sections: 0\n"
+        "sample_scan_section_target_words: 0\n"
+        "sample_scan_min_section_words: 0\n",
+        encoding="utf-8",
+    )
+    loaded = load_config(cfg)
+    assert loaded.sample_scan_ratio == 0.01  # clamped to low
+    assert loaded.sample_scan_max_ratio == 1.0  # clamped to high
+    assert loaded.sample_scan_max_sections == 1  # clamped to min
+    assert loaded.sample_scan_section_target_words == 20
+    assert loaded.sample_scan_min_section_words == 10

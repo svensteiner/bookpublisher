@@ -15,6 +15,16 @@ max_manuscript_chars: 60000
 llm_retry_attempts: 2
 llm_retry_backoff_seconds: 0.5
 
+# First-N%-Deep-Scan tuning. The default 10%/14% matches Amazon's
+# Kindle-Sample window. Short nonfiction (<25k words) should raise
+# `sample_scan_ratio` to ~0.20 and lower `sample_scan_min_section_words`
+# to ~50 so the scan still produces 4-6 sections.
+sample_scan_ratio: 0.10
+sample_scan_max_ratio: 0.14
+sample_scan_max_sections: 8
+sample_scan_section_target_words: 350
+sample_scan_min_section_words: 90
+
 read_only: true
 artifact_mirror_single_project: true
 skills_directory: skills
