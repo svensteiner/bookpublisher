@@ -70,6 +70,12 @@ class AppConfig:
     # angles for books where multiple differentiation hooks need to land
     # in the Amazon description.
     beginner_summary_positioning_limit: int = 1
+    # Number of KDP keyword slots surfaced in beginner_summary.md
+    # ("## KDP-Keywords (Top-3)"). 3 = canonical default that matches the
+    # subject_audience + audience_format + anchor_pair spread. KDP allows
+    # at most 7 keywords total, so values above 7 are clamped — picking
+    # all 7 turns the summary into the full keyword report.
+    beginner_summary_kdp_keyword_limit: int = 3
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -121,6 +127,10 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         beginner_summary_positioning_limit=max(
             1,
             min(3, int(data.get("beginner_summary_positioning_limit", 1))),
+        ),
+        beginner_summary_kdp_keyword_limit=max(
+            1,
+            min(7, int(data.get("beginner_summary_kdp_keyword_limit", 3))),
         ),
         raw=data,
     )

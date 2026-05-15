@@ -249,6 +249,9 @@ def _score_history_payload(
     }
 
 
+TOP_KDP_KEYWORD_MAX_LIMIT: int = 7
+
+
 def _top_kdp_keywords_payload(
     keywords: list[KDPKeyword] | None,
     *,
@@ -274,7 +277,7 @@ def _top_kdp_keywords_payload(
 
     if not keywords:
         return None
-    cap = max(0, limit)
+    cap = max(0, min(TOP_KDP_KEYWORD_MAX_LIMIT, int(limit)))
     if cap == 0:
         return []
     picked_texts: set[str] = set()
@@ -955,7 +958,10 @@ class PublisherPipeline:
             )
             score_history_highlight = _score_history_payload(history)
             kdp_keywords = build_kdp_keywords(project)
-            top_kdp_keywords = _top_kdp_keywords_payload(kdp_keywords)
+            top_kdp_keywords = _top_kdp_keywords_payload(
+                kdp_keywords,
+                limit=self.config.beginner_summary_kdp_keyword_limit,
+            )
             persona_report = build_persona_report(project, chapter_titles=chapter_titles)
             top_persona = _top_persona_payload(persona_report)
             persona_match = build_persona_match_report(

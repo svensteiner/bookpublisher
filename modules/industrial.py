@@ -841,33 +841,50 @@ def _render_score_history_highlight(
     return lines
 
 
+_KDP_KEYWORD_COUNT_WORDS: dict[int, str] = {
+    1: "stärkste",
+    2: "zwei stärksten",
+    3: "drei stärksten",
+    4: "vier stärksten",
+    5: "fünf stärksten",
+    6: "sechs stärksten",
+    7: "sieben stärksten",
+}
+
+
 def _render_top_kdp_keywords(
     top_keywords: list[dict[str, Any]] | None,
 ) -> list[str]:
-    """Render the 'KDP-Keywords (Top-3)' block from the top-keyword payload.
+    """Render the 'KDP-Keywords (Top-N)' block from the top-keyword payload.
 
     Each dict is expected to carry ``text``, ``char_count``, ``source``
     and ``rationale`` (matching ``KDPKeyword.to_json``). Returns an empty
     list when no keywords are provided so the section is omitted entirely
     — the full kdp_keywords.md remains the source of truth for all 7
-    slots and the spielregeln-Block.
+    slots and the spielregeln-Block. Heading and intro adapt to the
+    configured ``beginner_summary_kdp_keyword_limit`` so authors who pick
+    5 or 7 slots see the correct count in the section header.
     """
 
     if not top_keywords:
         return []
+    visible = [kw for kw in top_keywords if str(kw.get("text") or "").strip()]
+    if not visible:
+        return []
+    count = len(visible)
+    intro_word = _KDP_KEYWORD_COUNT_WORDS.get(count, f"{count} stärksten")
+    intro_descriptor = "Slot" if count == 1 else "Slots"
     lines: list[str] = [
-        "## KDP-Keywords (Top-3)",
+        f"## KDP-Keywords (Top-{count})",
         "",
         (
-            "Die drei stärksten Slots aus der 7er-Liste — sofort ins KDP-Backend "
+            f"Die {intro_word} {intro_descriptor} aus der 7er-Liste — sofort ins KDP-Backend "
             "übernehmbar (Buchdetails > Schlüsselwörter)."
         ),
         "",
     ]
-    for idx, keyword in enumerate(top_keywords, start=1):
+    for idx, keyword in enumerate(visible, start=1):
         text = str(keyword.get("text") or "").strip()
-        if not text:
-            continue
         char_count = int(keyword.get("char_count") or len(text))
         rationale = str(keyword.get("rationale") or "").strip()
         lines.append(f"{idx}. `{text}`  *(Zeichen: {char_count}/50)*")

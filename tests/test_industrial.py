@@ -817,7 +817,11 @@ def test_render_beginner_summary_top_kdp_keywords_section_absent_when_none():
 
 
 def test_render_beginner_summary_top_kdp_keywords_handles_partial_dicts():
-    """Missing rationale must not yield an empty 'Warum:' line."""
+    """Missing rationale must not yield an empty 'Warum:' line.
+
+    Also: the heading must adapt to the actual visible-keyword count
+    (here: 1) since the limit is now configurable via AppConfig.
+    """
     result = build_industrial_qa(_project(manuscript=None, cover=None))
     top_keywords = [
         {"text": "ratgeber praxis", "char_count": 15, "source": "fallback"},
@@ -825,13 +829,17 @@ def test_render_beginner_summary_top_kdp_keywords_handles_partial_dicts():
     summary = render_beginner_summary(
         _project(manuscript=None, cover=None), result, top_kdp_keywords=top_keywords
     )
-    assert "## KDP-Keywords (Top-3)" in summary
+    assert "## KDP-Keywords (Top-1)" in summary
     assert "`ratgeber praxis`" in summary
     assert "Warum:" not in summary
 
 
 def test_render_beginner_summary_top_kdp_keywords_skips_empty_text_entries():
-    """A whitespace-only ``text`` entry must not produce a backtick-only line."""
+    """A whitespace-only ``text`` entry must not produce a backtick-only line.
+
+    The heading reflects the visible (non-empty) count so the author is
+    not lied to about how many slots actually rendered.
+    """
     result = build_industrial_qa(_project(manuscript=None, cover=None))
     top_keywords = [
         {"text": "   ", "char_count": 0, "source": "fallback", "rationale": "skip"},
@@ -840,11 +848,47 @@ def test_render_beginner_summary_top_kdp_keywords_skips_empty_text_entries():
     summary = render_beginner_summary(
         _project(manuscript=None, cover=None), result, top_kdp_keywords=top_keywords
     )
-    assert "## KDP-Keywords (Top-3)" in summary
+    assert "## KDP-Keywords (Top-1)" in summary
     assert "`buch ratgeber`" in summary
     # Empty text must not appear as a numbered item.
     assert "1. ``" not in summary
     assert "2. ``" not in summary
+
+
+def test_render_beginner_summary_top_kdp_keywords_heading_scales_with_count():
+    """Heading and intro must adapt to the configured limit so authors
+    who set ``beginner_summary_kdp_keyword_limit: 5`` see 'Top-5' (not
+    'Top-3') and the corresponding German word in the intro."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    top_five = [
+        {"text": f"slot {i}", "char_count": 6, "source": "fallback", "rationale": ""}
+        for i in range(5)
+    ]
+    summary_five = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_kdp_keywords=top_five
+    )
+    assert "## KDP-Keywords (Top-5)" in summary_five
+    assert "Die fünf stärksten Slots" in summary_five
+
+    top_seven = [
+        {"text": f"slot {i}", "char_count": 6, "source": "fallback", "rationale": ""}
+        for i in range(7)
+    ]
+    summary_seven = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_kdp_keywords=top_seven
+    )
+    assert "## KDP-Keywords (Top-7)" in summary_seven
+    assert "Die sieben stärksten Slots" in summary_seven
+
+    top_one = [
+        {"text": "slot 0", "char_count": 6, "source": "fallback", "rationale": ""}
+    ]
+    summary_one = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, top_kdp_keywords=top_one
+    )
+    assert "## KDP-Keywords (Top-1)" in summary_one
+    # Singular form: "Slot" (no plural-s), and stärkste (no plural-n).
+    assert "Die stärkste Slot" in summary_one
 
 
 def test_render_beginner_summary_handles_empty_gate_list():

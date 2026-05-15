@@ -39,6 +39,12 @@ balance_min_chapters: 3
 # land in the Amazon description.
 beginner_summary_positioning_limit: 1
 
+# Number of KDP keyword slots surfaced in beginner_summary.md. 3 = the
+# canonical subject_audience + audience_format + anchor_pair spread.
+# Raise to 5-7 for authors who want to copy-paste the full keyword set
+# straight from the summary; KDP allows at most 7 keywords.
+beginner_summary_kdp_keyword_limit: 3
+
 read_only: true
 artifact_mirror_single_project: true
 skills_directory: skills

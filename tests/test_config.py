@@ -73,3 +73,37 @@ def test_positioning_limit_clamps_below_one():
         extra="beginner_summary_positioning_limit: 0\n",
     )
     assert loaded.beginner_summary_positioning_limit == 1
+
+
+def test_kdp_keyword_limit_defaults_to_three():
+    loaded = _minimal_config("config_kdp_keyword_default")
+    assert loaded.beginner_summary_kdp_keyword_limit == 3
+
+
+def test_kdp_keyword_limit_reads_yaml_value():
+    loaded = _minimal_config(
+        "config_kdp_keyword_yaml",
+        extra="beginner_summary_kdp_keyword_limit: 5\n",
+    )
+    assert loaded.beginner_summary_kdp_keyword_limit == 5
+
+
+def test_kdp_keyword_limit_clamps_above_seven():
+    """KDP allows at most 7 keywords — anything higher would imply slots
+    that Amazon never accepts, so the loader caps at 7."""
+    loaded = _minimal_config(
+        "config_kdp_keyword_high",
+        extra="beginner_summary_kdp_keyword_limit: 42\n",
+    )
+    assert loaded.beginner_summary_kdp_keyword_limit == 7
+
+
+def test_kdp_keyword_limit_clamps_below_one():
+    """Values <1 must clamp to 1 so the strongest slot is always shown
+    when a real keyword report exists — silencing the section entirely
+    would hide the most actionable KDP backend block from the summary."""
+    loaded = _minimal_config(
+        "config_kdp_keyword_low",
+        extra="beginner_summary_kdp_keyword_limit: 0\n",
+    )
+    assert loaded.beginner_summary_kdp_keyword_limit == 1

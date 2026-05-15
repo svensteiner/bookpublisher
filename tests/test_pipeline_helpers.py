@@ -653,6 +653,51 @@ def test_top_kdp_keywords_payload_dedups_when_same_text_repeated():
     assert texts.count("a") == 1
 
 
+def test_top_kdp_keywords_payload_clamps_to_kdp_max_limit():
+    """Out-of-range limits (e.g. 99) must clamp to TOP_KDP_KEYWORD_MAX_LIMIT
+    so the payload never asks Amazon for more than 7 keyword slots."""
+    from modules.pipeline import TOP_KDP_KEYWORD_MAX_LIMIT
+    kws = [_kw(f"slot {i}", "subject_format") for i in range(10)]
+    top = _top_kdp_keywords_payload(kws, limit=99)
+    assert top is not None
+    assert len(top) == TOP_KDP_KEYWORD_MAX_LIMIT == 7
+
+
+def test_top_kdp_keywords_payload_respects_configurable_limit_below_default():
+    """A caller can pass ``limit=1`` (e.g. ultra-compact summary mode) and
+    only the strongest slot must come back — the diversity preference still
+    governs which one wins."""
+    kws = [
+        _kw("subject ratgeber", "subject_format", rationale="r-sf"),
+        _kw("audience format", "audience_format", rationale="r-af"),
+        _kw("anchor pair", "anchor_pair", rationale="r-ap"),
+    ]
+    top = _top_kdp_keywords_payload(kws, limit=1)
+    assert top is not None
+    assert len(top) == 1
+    assert top[0]["text"] == "subject ratgeber"
+
+
+def test_top_kdp_keywords_payload_respects_configurable_limit_above_default():
+    """A caller can request the full 7-slot copy block — every available
+    keyword must appear, diversity-first then ordered fallback."""
+    kws = [
+        _kw("a sf", "subject_format"),
+        _kw("b sa", "subject_audience"),
+        _kw("c af", "audience_format"),
+        _kw("d ap", "anchor_pair"),
+        _kw("e fb", "fallback"),
+        _kw("f sf2", "subject_format"),
+        _kw("g sa2", "subject_audience"),
+    ]
+    top = _top_kdp_keywords_payload(kws, limit=7)
+    assert top is not None
+    assert len(top) == 7
+    assert {item["text"] for item in top} == {
+        "a sf", "b sa", "c af", "d ap", "e fb", "f sf2", "g sa2",
+    }
+
+
 # ─── _top_positioning_payload ───────────────────────────────────────────
 
 
