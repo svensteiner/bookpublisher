@@ -76,6 +76,13 @@ class AppConfig:
     # at most 7 keywords total, so values above 7 are clamped — picking
     # all 7 turns the summary into the full keyword report.
     beginner_summary_kdp_keyword_limit: int = 3
+    # Number of weakest chapters surfaced in beginner_summary.md
+    # ("## Schwächste Kapitel"). 3 = canonical default that keeps the
+    # summary focused on the top fix-candidates. Authors with many short
+    # chapters (>20) can raise this so cluster-issues become visible at a
+    # glance. Clamped to [1, 10]: more than 10 stops being a "weakest"
+    # signal and turns the summary into the full chapter report.
+    beginner_summary_weakest_limit: int = 3
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -131,6 +138,10 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         beginner_summary_kdp_keyword_limit=max(
             1,
             min(7, int(data.get("beginner_summary_kdp_keyword_limit", 3))),
+        ),
+        beginner_summary_weakest_limit=max(
+            1,
+            min(10, int(data.get("beginner_summary_weakest_limit", 3))),
         ),
         raw=data,
     )

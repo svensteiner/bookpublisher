@@ -895,7 +895,10 @@ class PublisherPipeline:
                     project_id=project.project_id,
                     reason=str(exc),
                 )
-            weakest_chapters = _weakest_chapter_payload(chapter_json, limit=3)
+            weakest_chapters = _weakest_chapter_payload(
+                chapter_json,
+                limit=self.config.beginner_summary_weakest_limit,
+            )
             top_chapter_balance = _top_chapter_balance_payload(chapter_json)
             sample_json: dict | None = None
             try:

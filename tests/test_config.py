@@ -107,3 +107,38 @@ def test_kdp_keyword_limit_clamps_below_one():
         extra="beginner_summary_kdp_keyword_limit: 0\n",
     )
     assert loaded.beginner_summary_kdp_keyword_limit == 1
+
+
+def test_weakest_limit_defaults_to_three():
+    loaded = _minimal_config("config_weakest_default")
+    assert loaded.beginner_summary_weakest_limit == 3
+
+
+def test_weakest_limit_reads_yaml_value():
+    loaded = _minimal_config(
+        "config_weakest_yaml",
+        extra="beginner_summary_weakest_limit: 5\n",
+    )
+    assert loaded.beginner_summary_weakest_limit == 5
+
+
+def test_weakest_limit_clamps_above_ten():
+    """Beyond 10 the section stops being a 'weakest' signal and turns into
+    the full chapter report — the loader caps at 10 so the summary stays
+    focused on the top fix-candidates."""
+    loaded = _minimal_config(
+        "config_weakest_high",
+        extra="beginner_summary_weakest_limit: 99\n",
+    )
+    assert loaded.beginner_summary_weakest_limit == 10
+
+
+def test_weakest_limit_clamps_below_one():
+    """Values <1 must clamp to 1 so the strongest fix-candidate is always
+    surfaced when a real chapter report exists — silencing the section
+    entirely would hide the most actionable diagnostic in the summary."""
+    loaded = _minimal_config(
+        "config_weakest_low",
+        extra="beginner_summary_weakest_limit: 0\n",
+    )
+    assert loaded.beginner_summary_weakest_limit == 1
