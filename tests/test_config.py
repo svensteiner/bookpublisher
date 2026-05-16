@@ -142,3 +142,38 @@ def test_weakest_limit_clamps_below_one():
         extra="beginner_summary_weakest_limit: 0\n",
     )
     assert loaded.beginner_summary_weakest_limit == 1
+
+
+def test_weakest_sample_limit_defaults_to_one():
+    loaded = _minimal_config("config_weakest_sample_default")
+    assert loaded.beginner_summary_weakest_sample_limit == 1
+
+
+def test_weakest_sample_limit_reads_yaml_value():
+    loaded = _minimal_config(
+        "config_weakest_sample_yaml",
+        extra="beginner_summary_weakest_sample_limit: 3\n",
+    )
+    assert loaded.beginner_summary_weakest_sample_limit == 3
+
+
+def test_weakest_sample_limit_clamps_above_ten():
+    """Beyond 10 the section stops being a 'weakest' signal and turns into
+    the full sample-scan report — the loader caps at 10 so the summary
+    stays focused on the top drop-off risks."""
+    loaded = _minimal_config(
+        "config_weakest_sample_high",
+        extra="beginner_summary_weakest_sample_limit: 99\n",
+    )
+    assert loaded.beginner_summary_weakest_sample_limit == 10
+
+
+def test_weakest_sample_limit_clamps_below_one():
+    """Values <1 must clamp to 1 so the highest-risk Kindle-Sample section
+    is always surfaced when one exists — silencing the section entirely
+    would hide the single most actionable diagnostic for sample drop-off."""
+    loaded = _minimal_config(
+        "config_weakest_sample_low",
+        extra="beginner_summary_weakest_sample_limit: 0\n",
+    )
+    assert loaded.beginner_summary_weakest_sample_limit == 1

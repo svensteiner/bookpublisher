@@ -83,6 +83,13 @@ class AppConfig:
     # glance. Clamped to [1, 10]: more than 10 stops being a "weakest"
     # signal and turns the summary into the full chapter report.
     beginner_summary_weakest_limit: int = 3
+    # Number of weakest Kindle-Sample sections surfaced in beginner_summary.md
+    # ("## Schwächster Sample-Abschnitt" / "## Schwächste Sample-Abschnitte").
+    # 1 = canonical default (only the highest drop-off risk). Raise to 2-3 for
+    # long nonfiction (>100k words) where multiple FIX-flagged sections in the
+    # Kindle preview signal a cluster issue rather than a single weak passage.
+    # Clamped to [1, sample_scan_max_sections] downstream (max 10 here).
+    beginner_summary_weakest_sample_limit: int = 1
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -142,6 +149,10 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         beginner_summary_weakest_limit=max(
             1,
             min(10, int(data.get("beginner_summary_weakest_limit", 3))),
+        ),
+        beginner_summary_weakest_sample_limit=max(
+            1,
+            min(10, int(data.get("beginner_summary_weakest_sample_limit", 1))),
         ),
         raw=data,
     )

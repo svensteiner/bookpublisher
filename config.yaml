@@ -52,6 +52,14 @@ beginner_summary_kdp_keyword_limit: 3
 # visible. Clamped to [1, 10].
 beginner_summary_weakest_limit: 3
 
+# Number of weakest Kindle-Sample sections surfaced in beginner_summary.md.
+# 1 = only the single highest drop-off risk (default — keeps the summary
+# focused on the one passage where Kindle-readers most likely abandon).
+# Raise to 2-3 for long nonfiction (>100k words) where the sample scan
+# typically reports several FIX-flagged sections that hint at a cluster
+# issue rather than a single weak passage. Clamped to [1, 10].
+beginner_summary_weakest_sample_limit: 1
+
 read_only: true
 artifact_mirror_single_project: true
 skills_directory: skills

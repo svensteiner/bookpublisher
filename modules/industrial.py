@@ -898,35 +898,75 @@ def _render_top_kdp_keywords(
     return lines
 
 
-def _render_weakest_sample(weakest_sample: dict[str, Any] | None) -> list[str]:
-    """Render the 'Schwächster Sample-Abschnitt' block.
+def _render_sample_section_line(section: dict[str, Any]) -> list[str]:
+    """Format one sample-scan section into two markdown lines.
 
-    The dict is expected to carry ``index``, ``label``, ``overall``,
-    ``risk`` and ``fix`` (matching ``SampleSectionScore.to_json``).
-    Returns an empty list when no risk data is provided so the section is
-    omitted entirely — keeping the summary clean when the Kindle-Sample
-    has no drop-off risk.
+    Returns a `[bullet, fix_line]` pair that matches the existing
+    single-section rendering so single- and multi-section blocks stay
+    visually consistent.
     """
 
-    if not weakest_sample:
-        return []
-    label = str(weakest_sample.get("label") or "").strip()
-    index = weakest_sample.get("index", "?")
-    score = int(weakest_sample.get("overall") or 0)
-    risk = str(weakest_sample.get("risk") or "").strip()
-    fix = str(weakest_sample.get("fix") or "").strip() or "Kein Fix-Vorschlag verfügbar."
+    label = str(section.get("label") or "").strip()
+    index = section.get("index", "?")
+    score = int(section.get("overall") or 0)
+    risk = str(section.get("risk") or "").strip()
+    fix = str(section.get("fix") or "").strip() or "Kein Fix-Vorschlag verfügbar."
     badge, _ = score_badge(score)
     headline = label or f"Abschnitt {index}"
     risk_suffix = f" — {risk}" if risk else ""
     return [
-        "## Schwächster Sample-Abschnitt",
-        "",
-        "Hier bricht der Kindle-Leser am ehesten ab. Fixe diesen Abschnitt zuerst.",
-        "",
         f"- {badge} **Abschnitt {index} — {headline}** ({score}/100){risk_suffix}",
         f"  Fix: {fix}",
-        "",
     ]
+
+
+def _render_weakest_samples(
+    weakest_samples: list[dict[str, Any]] | None,
+) -> list[str]:
+    """Render the weakest-sample block for one or many sections.
+
+    Each dict is expected to carry ``index``, ``label``, ``overall``,
+    ``risk`` and ``fix`` (matching ``SampleSectionScore.to_json``). When
+    the list is empty (or ``None``) the section is omitted entirely so
+    the summary stays clean for manuscripts with no drop-off risk.
+
+    When the list contains exactly one section, the legacy singular
+    heading ``## Schwächster Sample-Abschnitt`` is rendered to preserve
+    backward-compat with prior summaries. When two or more sections are
+    surfaced, a plural heading + intro signal that the Kindle-Sample has
+    a cluster issue rather than a single weak passage.
+    """
+
+    if not weakest_samples:
+        return []
+    count = len(weakest_samples)
+    if count == 1:
+        heading = "## Schwächster Sample-Abschnitt"
+        intro = "Hier bricht der Kindle-Leser am ehesten ab. Fixe diesen Abschnitt zuerst."
+    else:
+        heading = "## Schwächste Sample-Abschnitte"
+        intro = (
+            f"Die {count} riskantesten Stellen im Kindle-Sample. "
+            "Mehrere FIX-Flags hier deuten auf ein Cluster-Problem hin — "
+            "fixe sie in dieser Reihenfolge."
+        )
+    lines: list[str] = [heading, "", intro, ""]
+    for section in weakest_samples:
+        lines.extend(_render_sample_section_line(section))
+    lines.append("")
+    return lines
+
+
+def _render_weakest_sample(weakest_sample: dict[str, Any] | None) -> list[str]:
+    """Backwards-compatible single-section renderer.
+
+    Delegates to ``_render_weakest_samples`` with a one-element list so
+    existing callers that pass a single dict keep working unchanged.
+    """
+
+    if not weakest_sample:
+        return []
+    return _render_weakest_samples([weakest_sample])
 
 
 def _render_top_persona(
@@ -1304,6 +1344,7 @@ def render_beginner_summary(
     report: dict[str, Any],
     weakest_chapters: list[dict[str, Any]] | None = None,
     weakest_sample: dict[str, Any] | None = None,
+    weakest_samples: list[dict[str, Any]] | None = None,
     top_rewrite: dict[str, Any] | None = None,
     round_delta_highlight: dict[str, Any] | None = None,
     score_history_highlight: dict[str, Any] | None = None,
@@ -1375,7 +1416,12 @@ def render_beginner_summary(
     lines.extend(_render_score_history_highlight(score_history_highlight))
     lines.extend(_render_weakest_chapters(weakest_chapters))
     lines.extend(_render_top_chapter_balance(top_chapter_balance))
-    lines.extend(_render_weakest_sample(weakest_sample))
+    # Prefer the list parameter when callers pass it; fall back to the
+    # legacy single-dict form so older call sites and tests keep working.
+    if weakest_samples is not None:
+        lines.extend(_render_weakest_samples(weakest_samples))
+    else:
+        lines.extend(_render_weakest_sample(weakest_sample))
     lines.extend(_render_top_arc(top_arc))
     lines.extend(_render_top_persona(top_persona))
     lines.extend(_render_persona_match_highlight(persona_match))

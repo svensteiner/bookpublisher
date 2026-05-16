@@ -462,6 +462,108 @@ def test_render_beginner_summary_weakest_sample_handles_missing_fields():
     assert "Kein Fix-Vorschlag" in summary
 
 
+def test_render_beginner_summary_weakest_samples_single_uses_singular_heading():
+    """One-section list must keep the legacy singular heading for stability."""
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    samples = [
+        {
+            "index": 2,
+            "label": "Eroeffnung",
+            "overall": 48,
+            "status": "FIX",
+            "risk": "ABBRUCH-RISIKO",
+            "fix": "Setze einen Hook-Satz mit konkreter Zahl an den Anfang.",
+        }
+    ]
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_samples=samples
+    )
+    assert "## Schwächster Sample-Abschnitt" in summary
+    assert "## Schwächste Sample-Abschnitte" not in summary
+    assert "Abschnitt 2 — Eroeffnung" in summary
+    assert "48/100" in summary
+    assert "ABBRUCH-RISIKO" in summary
+
+
+def test_render_beginner_summary_weakest_samples_multi_uses_plural_heading():
+    """Two+ sections must use the plural heading + cluster-issue intro."""
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    samples = [
+        {
+            "index": 2,
+            "label": "Eroeffnung",
+            "overall": 40,
+            "status": "FIX",
+            "risk": "ABBRUCH-RISIKO",
+            "fix": "fix-a",
+        },
+        {
+            "index": 4,
+            "label": "Tiefe",
+            "overall": 55,
+            "status": "FIX",
+            "risk": "REVIEW",
+            "fix": "fix-b",
+        },
+        {
+            "index": 6,
+            "label": "Schluss",
+            "overall": 62,
+            "status": "REVIEW",
+            "risk": "",
+            "fix": "fix-c",
+        },
+    ]
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_samples=samples
+    )
+    assert "## Schwächste Sample-Abschnitte" in summary
+    assert "## Schwächster Sample-Abschnitt" not in summary
+    assert "Die 3 riskantesten Stellen" in summary
+    assert "Cluster-Problem" in summary
+    # All three sections must appear with their indices and fixes
+    assert "Abschnitt 2 — Eroeffnung" in summary
+    assert "Abschnitt 4 — Tiefe" in summary
+    assert "Abschnitt 6 — Schluss" in summary
+    assert "fix-a" in summary
+    assert "fix-b" in summary
+    assert "fix-c" in summary
+
+
+def test_render_beginner_summary_weakest_samples_empty_list_omits_section():
+    """Empty list must omit the section entirely — no kosmetik."""
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_samples=[]
+    )
+    assert "Schwächster Sample-Abschnitt" not in summary
+    assert "Schwächste Sample-Abschnitte" not in summary
+
+
+def test_render_beginner_summary_weakest_samples_takes_precedence_over_single():
+    """When both params are passed, the list parameter wins (new API > legacy)."""
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    single = {"index": 9, "label": "Legacy", "overall": 30, "status": "FIX"}
+    samples = [
+        {"index": 1, "label": "New-A", "overall": 40, "status": "FIX"},
+        {"index": 2, "label": "New-B", "overall": 50, "status": "FIX"},
+    ]
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        weakest_sample=single,
+        weakest_samples=samples,
+    )
+    assert "## Schwächste Sample-Abschnitte" in summary
+    assert "New-A" in summary
+    assert "New-B" in summary
+    assert "Legacy" not in summary
+
+
 def test_render_beginner_summary_top_rewrite_section_present():
     result = build_industrial_qa(_project(manuscript=None, cover=None))
     top_rewrite = {

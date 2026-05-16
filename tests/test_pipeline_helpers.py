@@ -31,6 +31,8 @@ from modules.pipeline import (
     _top_rewrite_payload,
     _weakest_chapter_payload,
     _weakest_sample_payload,
+    _weakest_samples_payload,
+    WEAKEST_SAMPLE_MAX_LIMIT,
 )
 from modules.round_delta import compute_round_delta
 
@@ -171,6 +173,119 @@ def test_weakest_sample_payload_treats_missing_status_as_risky():
     weakest = _weakest_sample_payload(payload)
     assert weakest is not None
     assert weakest["overall"] == 50
+
+
+def test_weakest_samples_payload_returns_empty_list_when_no_report():
+    assert _weakest_samples_payload(None) == []
+    assert _weakest_samples_payload({}) == []
+    assert _weakest_samples_payload({"sections": []}) == []
+
+
+def test_weakest_samples_payload_returns_empty_when_all_ready():
+    payload = {
+        "sections": [
+            _section(1, 90, "READY"),
+            _section(2, 88, "READY"),
+        ]
+    }
+    assert _weakest_samples_payload(payload, limit=3) == []
+
+
+def test_weakest_samples_payload_picks_lowest_scores_ascending():
+    payload = {
+        "sections": [
+            _section(1, 80, "REVIEW", label="Auftakt", fix="fix-1"),
+            _section(2, 40, "FIX", label="Eroeffnung", fix="fix-2"),
+            _section(3, 70, "REVIEW", label="Methode", fix="fix-3"),
+            _section(4, 55, "FIX", label="Tiefe", fix="fix-4"),
+        ]
+    }
+    samples = _weakest_samples_payload(payload, limit=3)
+    assert [s["index"] for s in samples] == [2, 4, 3]
+    assert samples[0]["fix"] == "fix-2"
+    assert samples[1]["label"] == "Tiefe"
+
+
+def test_weakest_samples_payload_tie_breaks_by_index_ascending():
+    """Equal scores must produce a stable order — lower index wins."""
+
+    payload = {
+        "sections": [
+            _section(3, 50, "FIX", label="Drei"),
+            _section(1, 50, "FIX", label="Eins"),
+            _section(2, 50, "FIX", label="Zwei"),
+        ]
+    }
+    samples = _weakest_samples_payload(payload, limit=3)
+    assert [s["index"] for s in samples] == [1, 2, 3]
+
+
+def test_weakest_samples_payload_clamps_to_available_risky_sections():
+    payload = {
+        "sections": [
+            _section(1, 40, "FIX"),
+            _section(2, 90, "READY"),  # excluded
+            _section(3, 60, "REVIEW"),
+        ]
+    }
+    samples = _weakest_samples_payload(payload, limit=5)
+    assert [s["index"] for s in samples] == [1, 3]
+
+
+def test_weakest_samples_payload_respects_zero_limit_as_mute_switch():
+    payload = {"sections": [_section(1, 40, "FIX")]}
+    assert _weakest_samples_payload(payload, limit=0) == []
+
+
+def test_weakest_samples_payload_clamps_oversized_limit_to_max():
+    payload = {
+        "sections": [_section(i, 50 + i, "FIX") for i in range(1, 15)],
+    }
+    samples = _weakest_samples_payload(payload, limit=99)
+    assert len(samples) == WEAKEST_SAMPLE_MAX_LIMIT
+
+
+def test_weakest_samples_payload_default_limit_returns_single_section():
+    payload = {
+        "sections": [
+            _section(1, 80, "REVIEW"),
+            _section(2, 40, "FIX"),
+        ]
+    }
+    samples = _weakest_samples_payload(payload)
+    assert len(samples) == 1
+    assert samples[0]["index"] == 2
+
+
+def test_weakest_samples_payload_normalizes_section_fields():
+    """Returned dicts must carry the exact render-payload shape."""
+
+    payload = {"sections": [{"index": 1, "status": "FIX"}]}
+    samples = _weakest_samples_payload(payload)
+    assert samples == [
+        {
+            "index": 1,
+            "label": "",
+            "overall": 0,
+            "status": "FIX",
+            "risk": "",
+            "fix": "",
+        }
+    ]
+
+
+def test_weakest_sample_payload_remains_first_element_of_list_payload():
+    """The backwards-compat single-dict helper must agree with the list head."""
+
+    payload = {
+        "sections": [
+            _section(1, 80, "REVIEW", label="Auftakt"),
+            _section(2, 40, "FIX", label="Eroeffnung"),
+        ]
+    }
+    single = _weakest_sample_payload(payload)
+    multi = _weakest_samples_payload(payload, limit=1)
+    assert single == multi[0]
 
 
 def _bundle(

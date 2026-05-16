@@ -711,34 +711,72 @@ def _top_arc_payload(arc_json: dict | None) -> dict | None:
     }
 
 
-def _weakest_sample_payload(sample_json: dict | None) -> dict | None:
-    """Extract the highest-risk Kindle-Sample section from a sample-scan payload.
+WEAKEST_SAMPLE_MAX_LIMIT = 10
 
-    Returns ``None`` when no sample data is available, no sections were
-    scored, or the weakest section is already ``READY`` (no drop-off
-    risk worth surfacing in beginner_summary). When a risky section
-    exists, returns a dict with ``index``, ``label``, ``overall``,
-    ``status``, ``risk`` and ``fix`` — the fields
-    ``render_beginner_summary`` needs.
+
+def _sample_section_dict(section: dict) -> dict:
+    """Project one sample-scan section into the render-payload shape."""
+
+    return {
+        "index": section.get("index"),
+        "label": section.get("label") or "",
+        "overall": int(section.get("overall") or 0),
+        "status": str(section.get("status") or "").upper(),
+        "risk": section.get("risk") or "",
+        "fix": section.get("fix") or "",
+    }
+
+
+def _weakest_samples_payload(
+    sample_json: dict | None,
+    *,
+    limit: int = 1,
+) -> list[dict]:
+    """Extract the N highest-risk Kindle-Sample sections.
+
+    Returns an empty list when no sample data is available, no sections
+    were scored, or every section is already ``READY`` (no drop-off
+    risk worth surfacing in beginner_summary). When risky sections
+    exist, returns up to ``limit`` of them as dicts sorted by ``overall``
+    ascending (lowest score first), tie-break by ``index`` ascending so
+    the order stays stable across runs. ``limit`` is clamped to
+    ``[0, WEAKEST_SAMPLE_MAX_LIMIT]`` — ``0`` is honored as an explicit
+    mute switch, anything above the cap is reduced to the cap so the
+    summary never explodes into the full sample report.
     """
 
     if not sample_json:
-        return None
+        return []
     sections = sample_json.get("sections") or []
     if not sections:
-        return None
-    weakest = min(sections, key=lambda s: int(s.get("overall") or 0))
-    status = str(weakest.get("status") or "").upper()
-    if status == "READY":
-        return None
-    return {
-        "index": weakest.get("index"),
-        "label": weakest.get("label") or "",
-        "overall": int(weakest.get("overall") or 0),
-        "status": status,
-        "risk": weakest.get("risk") or "",
-        "fix": weakest.get("fix") or "",
-    }
+        return []
+    clamped_limit = max(0, min(WEAKEST_SAMPLE_MAX_LIMIT, int(limit)))
+    if clamped_limit == 0:
+        return []
+    risky = [
+        section
+        for section in sections
+        if str(section.get("status") or "").upper() != "READY"
+    ]
+    if not risky:
+        return []
+    ordered = sorted(
+        risky,
+        key=lambda s: (int(s.get("overall") or 0), int(s.get("index") or 0)),
+    )
+    return [_sample_section_dict(section) for section in ordered[:clamped_limit]]
+
+
+def _weakest_sample_payload(sample_json: dict | None) -> dict | None:
+    """Backwards-compatible thin wrapper around ``_weakest_samples_payload``.
+
+    Returns the single weakest risky section as a dict, or ``None`` when
+    no risky section exists. Preserves the old call sites that consume
+    one section without iterating.
+    """
+
+    payload = _weakest_samples_payload(sample_json, limit=1)
+    return payload[0] if payload else None
 
 
 class PublisherPipeline:
@@ -914,7 +952,10 @@ class PublisherPipeline:
                     project_id=project.project_id,
                     reason=str(exc),
                 )
-            weakest_sample = _weakest_sample_payload(sample_json)
+            weakest_samples = _weakest_samples_payload(
+                sample_json,
+                limit=self.config.beginner_summary_weakest_sample_limit,
+            )
             rewrite_report = build_rewrite_report(project)
             rewrite_json = rewrite_report.to_json()
             top_rewrite = _top_rewrite_payload(rewrite_json)
@@ -980,7 +1021,7 @@ class PublisherPipeline:
                     project,
                     qa,
                     weakest_chapters=weakest_chapters,
-                    weakest_sample=weakest_sample,
+                    weakest_samples=weakest_samples,
                     top_rewrite=top_rewrite,
                     round_delta_highlight=round_delta_highlight,
                     score_history_highlight=score_history_highlight,
