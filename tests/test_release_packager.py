@@ -9,6 +9,7 @@ import pytest
 
 from modules.release_packager import (
     DEFAULT_BEISPIELBUCH_DIRNAME,
+    DEFAULT_EXE_RELPATH,
     DEFAULT_LAUNCHER_FILENAME,
     EXCLUDED_PATTERNS,
     ReleaseManifest,
@@ -32,7 +33,7 @@ def _make_fake_project(root: Path, *, with_exe: bool = False) -> dict[str, Path]
 
     exe_path: Path | None = None
     if with_exe:
-        exe_dir = root / "dist" / "BookPublisher"
+        exe_dir = root / "dist"
         exe_dir.mkdir(parents=True)
         exe_path = exe_dir / "BookPublisher.exe"
         exe_path.write_bytes(b"MZ\x90\x00fake-exe")
@@ -86,6 +87,10 @@ def test_build_release_zip_includes_exe_when_present(tmp_path):
     assert not any("Kein EXE-Pfad" in w for w in manifest.warnings)
 
 
+def test_default_exe_path_is_single_file_dist_exe():
+    assert DEFAULT_EXE_RELPATH == "dist/BookPublisher.exe"
+
+
 def test_build_release_zip_records_warning_when_exe_missing(tmp_path):
     _make_fake_project(tmp_path)  # no exe built
     output = tmp_path / "BookPublisher.zip"
@@ -99,7 +104,7 @@ def test_build_release_zip_records_warning_when_exe_missing(tmp_path):
 
 def test_build_release_zip_records_warning_when_exe_path_does_not_exist(tmp_path):
     _make_fake_project(tmp_path)
-    missing = tmp_path / "dist" / "BookPublisher" / "BookPublisher.exe"
+    missing = tmp_path / "dist" / "BookPublisher.exe"
     output = tmp_path / "BookPublisher.zip"
 
     manifest = build_release_zip(tmp_path, output, exe_path=missing)

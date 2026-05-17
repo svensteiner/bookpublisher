@@ -23,7 +23,7 @@ from typing import Any
 DEFAULT_RELEASE_DIRNAME: str = "release"
 DEFAULT_BEISPIELBUCH_DIRNAME: str = "beispielbuch"
 DEFAULT_LAUNCHER_FILENAME: str = "BookPublisher starten.bat"
-DEFAULT_EXE_RELPATH: str = "dist/BookPublisher/BookPublisher.exe"
+DEFAULT_EXE_RELPATH: str = "dist/BookPublisher.exe"
 DEFAULT_OUTPUT_RELPATH: str = "dist/BookPublisher.zip"
 
 # Top-level LIES_MICH.txt written into the ZIP root. Kept inline (not
