@@ -16,10 +16,19 @@ python -m PyInstaller ^
   --add-data "modules;modules" ^
   --exclude-module pytest ^
   --exclude-module _pytest ^
+  --exclude-module hypothesis ^
   --exclude-module IPython ^
+  --exclude-module jupyter ^
   --exclude-module notebook ^
+  --exclude-module pandas ^
+  --exclude-module numpy ^
+  --exclude-module pyarrow ^
   --exclude-module matplotlib ^
   --exclude-module scipy ^
+  --exclude-module sklearn ^
+  --exclude-module openpyxl ^
+  --exclude-module lxml ^
+  --exclude-module jinja2 ^
   gui.py
 
 echo.

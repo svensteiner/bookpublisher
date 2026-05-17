@@ -297,6 +297,8 @@ def test_main_cli_returns_zero_even_with_warnings(tmp_path, capsys):
         [
             "--output",
             str(output),
+            "--exe",
+            str(tmp_path / "missing" / "BookPublisher.exe"),
             "--release-dir",
             str(project / "release"),
         ]
