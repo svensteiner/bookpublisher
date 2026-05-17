@@ -19,6 +19,13 @@ from modules.chapters import (
 from modules.config import AppConfig
 from modules.discovery import BookProject
 from modules.llm import LLMClient
+from modules.readability import (
+    DEFAULT_TARGET_MAX,
+    DEFAULT_TARGET_MIN,
+    ReadabilityReport,
+    readability_analysis_from_project,
+    render_readability_markdown,
+)
 from modules.prompts import (
     AMAZON_PROMPT,
     CHECKLIST_PROMPT,
@@ -226,6 +233,26 @@ def chapter_review(
     report = build_chapter_report(chapters, balance_thresholds=balance_thresholds)
     title = project.title or project.project_id
     return render_chapter_report_markdown(title, report), report.to_json()
+
+
+def readability_review(
+    project: BookProject,
+    *,
+    target_min: int = DEFAULT_TARGET_MIN,
+    target_max: int = DEFAULT_TARGET_MAX,
+) -> tuple[str, dict]:
+    """German FRE readability review. Returns (markdown, json_payload).
+
+    Pure-Python; safe to call in QA mode without an LLM API key. When
+    the project has no manuscript, an empty report is returned so the
+    pipeline still writes an artifact rather than failing the run.
+    """
+
+    report = readability_analysis_from_project(
+        project, target_min=target_min, target_max=target_max
+    )
+    title = project.title or project.project_id
+    return render_readability_markdown(title, report), report.to_json()
 
 
 def chapter_arc_review(project: BookProject) -> tuple[str, dict]:

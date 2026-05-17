@@ -27,6 +27,8 @@ QUICK_ROUND_ARTIFACTS = [
     "chapter_review.json",
     "chapter_arc.md",
     "chapter_arc.json",
+    "readability.md",
+    "readability.json",
     "rewrite_suggestions.md",
     "rewrite_suggestions.json",
     "amazon_description.html",

@@ -39,6 +39,7 @@ from modules.review import (
     manuscript_review,
     publisher_board_review,
     project_metadata,
+    readability_review,
     voice_report,
 )
 from modules.release_assets import (
@@ -1040,6 +1041,26 @@ class PublisherPipeline:
             if chapter_md is not None and chapter_json is not None:
                 self.writer.write_text("chapter_review.md", chapter_md, project.project_id)
                 self.writer.write_json("chapter_review.json", chapter_json, project.project_id)
+            try:
+                readability_md, readability_json = readability_review(project)
+                self.writer.write_text(
+                    "readability.md", readability_md, project.project_id
+                )
+                self.writer.write_json(
+                    "readability.json", readability_json, project.project_id
+                )
+                self.logger.log(
+                    "readability_completed",
+                    project_id=project.project_id,
+                    fre_score=readability_json.get("overall", {}).get("fre_score"),
+                    weakest_index=readability_json.get("weakest_index"),
+                )
+            except RuntimeError as exc:
+                self.logger.log(
+                    "readability_skipped",
+                    project_id=project.project_id,
+                    reason=str(exc),
+                )
             if arc_md is not None and arc_json is not None:
                 self.writer.write_text("chapter_arc.md", arc_md, project.project_id)
                 self.writer.write_json("chapter_arc.json", arc_json, project.project_id)
@@ -1206,6 +1227,8 @@ class PublisherPipeline:
             "chapter_review.json",
             "chapter_arc.md",
             "chapter_arc.json",
+            "readability.md",
+            "readability.json",
             "kindle_preview_check.md",
             "amazon_research_brief.md",
             "buyer_personas.md",
