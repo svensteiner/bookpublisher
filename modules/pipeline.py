@@ -789,6 +789,43 @@ def _weakest_sample_payload(sample_json: dict | None) -> dict | None:
 READABILITY_HIGHLIGHT_MIN_WORDS: int = 60
 
 
+def _readability_score(readability_json: dict | None) -> int | None:
+    """Aggregate readability score (rounded Amstad-FRE) for score_history.
+
+    Returns ``round(overall.fre_score)`` clamped to ``[0, 100]`` when the
+    manuscript carries at least ``READABILITY_HIGHLIGHT_MIN_WORDS`` words
+    of measurable body text. Returns ``None`` when:
+
+    - no readability JSON was produced (readability_review raised),
+    - the overall block is missing,
+    - the word count is below the meaningful-signal threshold,
+    - ``fre_score`` is missing or not numeric.
+
+    A ``None`` signals "no readability metric possible" so score_history
+    records a dash rather than a misleading zero. The score is rounded to
+    int because score_history stores all metrics as integers — the half-
+    point distinction does not matter for trend visualisation.
+    """
+
+    if not readability_json:
+        return None
+    overall = readability_json.get("overall") or {}
+    try:
+        word_count = int(overall.get("word_count") or 0)
+    except (TypeError, ValueError):
+        return None
+    if word_count < READABILITY_HIGHLIGHT_MIN_WORDS:
+        return None
+    fre_raw = overall.get("fre_score")
+    if fre_raw is None:
+        return None
+    try:
+        fre = float(fre_raw)
+    except (TypeError, ValueError):
+        return None
+    return max(0, min(100, round(fre)))
+
+
 def _readability_highlight_payload(
     readability_json: dict | None,
 ) -> dict | None:
@@ -1075,6 +1112,17 @@ class PublisherPipeline:
             top_collision_risk = _top_collision_risk_payload(positioning)
             positioning_score_value = _positioning_score(positioning)
             balance_score_value = _balance_score(chapter_json)
+            readability_md: str | None = None
+            readability_json: dict | None = None
+            try:
+                readability_md, readability_json = readability_review(project)
+            except RuntimeError as exc:
+                self.logger.log(
+                    "readability_skipped",
+                    project_id=project.project_id,
+                    reason=str(exc),
+                )
+            readability_score_value = _readability_score(readability_json)
             history_path = self.writer.project_dir(project.project_id) / "score_history.json"
             history = load_score_history(history_path, project.project_id)
             history = append_score_history(
@@ -1086,6 +1134,7 @@ class PublisherPipeline:
                 arc_score=arc_score_value,
                 positioning_score=positioning_score_value,
                 balance_score=balance_score_value,
+                readability_score=readability_score_value,
             )
             score_history_highlight = _score_history_payload(history)
             kdp_keywords = build_kdp_keywords(project)
@@ -1102,16 +1151,6 @@ class PublisherPipeline:
             persona_match_highlight = _persona_match_payload(persona_match)
             amazon_html_snippet = build_amazon_description_html(project)
             amazon_html_preview = _amazon_html_preview_payload(amazon_html_snippet)
-            readability_md: str | None = None
-            readability_json: dict | None = None
-            try:
-                readability_md, readability_json = readability_review(project)
-            except RuntimeError as exc:
-                self.logger.log(
-                    "readability_skipped",
-                    project_id=project.project_id,
-                    reason=str(exc),
-                )
             readability_highlight = _readability_highlight_payload(readability_json)
             self.writer.write_text(
                 "beginner_summary.md",

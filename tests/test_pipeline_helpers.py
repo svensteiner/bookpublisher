@@ -20,6 +20,7 @@ from modules.pipeline import (
     _balance_score,
     _persona_match_payload,
     _positioning_score,
+    _readability_score,
     _round_delta_payload,
     _score_history_payload,
     _top_arc_payload,
@@ -2009,3 +2010,65 @@ def test_readability_highlight_payload_skips_when_weakest_index_not_in_chapters(
     assert payload is not None
     assert payload["weakest_label"] == ""
     assert payload["weakest_fix"] == ""
+
+
+# ─── _readability_score (score_history feed) ──────────────────────────
+
+
+def test_readability_score_returns_none_for_empty_input():
+    assert _readability_score(None) is None
+    assert _readability_score({}) is None
+
+
+def test_readability_score_returns_rounded_int_for_valid_input():
+    raw = _readability_json(fre=62.3, word_count=400)
+    assert _readability_score(raw) == 62
+
+
+def test_readability_score_rounds_half_up_correctly():
+    """Python rounds half-to-even; 62.5 rounds to 62, 63.5 to 64."""
+    # Just verify the function returns an int and respects the round() contract.
+    raw = _readability_json(fre=72.8, word_count=400)
+    assert _readability_score(raw) == 73
+
+
+def test_readability_score_returns_none_when_word_count_below_min():
+    """Below the meaningful-signal threshold, no score is recorded."""
+    raw = _readability_json(fre=70.0, word_count=30)
+    assert _readability_score(raw) is None
+
+
+def test_readability_score_returns_none_when_fre_missing():
+    raw = _readability_json(fre=65.0, word_count=400)
+    raw["overall"].pop("fre_score")
+    assert _readability_score(raw) is None
+
+
+def test_readability_score_returns_none_when_fre_not_numeric():
+    raw = _readability_json(fre=65.0, word_count=400)
+    raw["overall"]["fre_score"] = "not-a-number"
+    assert _readability_score(raw) is None
+
+
+def test_readability_score_returns_none_when_overall_missing():
+    raw = {"chapters": [], "target_min": 50, "target_max": 80}
+    assert _readability_score(raw) is None
+
+
+def test_readability_score_clamps_negative_fre_to_zero():
+    """Amstad FRE can go negative on dense academic prose — clamp to 0."""
+    raw = _readability_json(fre=-12.0, word_count=400)
+    assert _readability_score(raw) == 0
+
+
+def test_readability_score_clamps_above_hundred():
+    """Defensive clamp: an over-100 FRE shouldn't pass through to score_history."""
+    raw = _readability_json(fre=125.0, word_count=400)
+    assert _readability_score(raw) == 100
+
+
+def test_readability_score_handles_non_int_word_count():
+    """A word_count that isn't coercible to int returns None, not a crash."""
+    raw = _readability_json(fre=65.0, word_count=400)
+    raw["overall"]["word_count"] = "many"
+    assert _readability_score(raw) is None

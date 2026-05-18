@@ -44,6 +44,8 @@ class ScoreHistoryEntry:
     positioning_delta: int | None = None
     balance_score: int | None = None
     balance_delta: int | None = None
+    readability_score: int | None = None
+    readability_delta: int | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -62,6 +64,8 @@ class ScoreHistoryEntry:
             "positioning_delta": self.positioning_delta,
             "balance_score": self.balance_score,
             "balance_delta": self.balance_delta,
+            "readability_score": self.readability_score,
+            "readability_delta": self.readability_delta,
         }
 
 
@@ -187,6 +191,7 @@ def append_score_history(
     arc_score: int | None = None,
     positioning_score: int | None = None,
     balance_score: int | None = None,
+    readability_score: int | None = None,
 ) -> dict[str, Any]:
     """Return a new history dict with one entry appended.
 
@@ -199,6 +204,10 @@ def append_score_history(
     positioning report (average of top-3 differentiation-angle strengths).
     ``balance_score`` follows the same pattern for chapter word-count
     balance (share of chapters within the median range).
+    ``readability_score`` follows the same pattern for Amstad-FRE
+    (rounded to int 0–100); rounds with too little text to compute a
+    meaningful FRE simply omit the metric, and the delta compares
+    against the most recent prior round that actually carried one.
     """
     timestamp = (now or datetime.now()).isoformat(timespec="seconds")
     previous_entries = list(history.get("entries") or [])
@@ -236,6 +245,14 @@ def append_score_history(
     else:
         balance_delta = current_bal - previous_bal
 
+    current_read = _coerce_optional_int(readability_score)
+    previous_read = _previous_optional_field(previous_entries, "readability_score")
+    readability_delta: int | None
+    if current_read is None or previous_read is None:
+        readability_delta = None
+    else:
+        readability_delta = current_read - previous_read
+
     entry = ScoreHistoryEntry(
         timestamp=timestamp,
         round_id=round_id,
@@ -252,6 +269,8 @@ def append_score_history(
         positioning_delta=positioning_delta,
         balance_score=current_bal,
         balance_delta=balance_delta,
+        readability_score=current_read,
+        readability_delta=readability_delta,
     )
 
     new_entries = previous_entries + [entry.to_json()]
@@ -429,6 +448,9 @@ def render_score_history_markdown(
     has_balance = any(
         _coerce_optional_int(entry.get("balance_score")) is not None for entry in entries
     )
+    has_readability = any(
+        _coerce_optional_int(entry.get("readability_score")) is not None for entry in entries
+    )
 
     header_cells = ["Datum", "Runde", "Modus", "Score", "Delta"]
     if has_arc:
@@ -437,6 +459,8 @@ def render_score_history_markdown(
         header_cells.append("Positionierung")
     if has_balance:
         header_cells.append("Balance")
+    if has_readability:
+        header_cells.append("Lesbarkeit")
     header_cells.append("Decision")
     lines.append("| " + " | ".join(header_cells) + " |")
     lines.append("|" + "---|" * len(header_cells))
@@ -465,6 +489,11 @@ def render_score_history_markdown(
             row.append(_format_optional_score_cell(
                 _coerce_optional_int(entry.get("balance_score")),
                 _coerce_optional_int(entry.get("balance_delta")),
+            ))
+        if has_readability:
+            row.append(_format_optional_score_cell(
+                _coerce_optional_int(entry.get("readability_score")),
+                _coerce_optional_int(entry.get("readability_delta")),
             ))
         row.append(decision)
         lines.append("| " + " | ".join(row) + " |")

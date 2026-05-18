@@ -891,3 +891,218 @@ def test_render_markdown_arc_positioning_balance_columns_all_present():
     assert "Arc" in header[0]
     assert "Positionierung" in header[0]
     assert "Balance" in header[0]
+
+
+# ─── readability_score tracking ────────────────────────────────────────
+
+
+def test_append_records_readability_score_when_provided():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(
+        history, project, _qa(industrial_score=78), readability_score=65
+    )
+
+    entry = history["entries"][0]
+    assert entry["readability_score"] == 65
+    assert entry["readability_delta"] is None
+
+
+def test_append_records_readability_delta_against_previous_entry():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history, project, _qa(industrial_score=70), readability_score=45
+    )
+
+    history = append_score_history(
+        history, project, _qa(industrial_score=82), readability_score=62
+    )
+
+    assert history["entries"][-1]["readability_score"] == 62
+    assert history["entries"][-1]["readability_delta"] == 17
+
+
+def test_append_readability_delta_skips_rounds_without_readability():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history, project, _qa(industrial_score=70), readability_score=45
+    )
+    # second round without a usable readability measurement (e.g. manuscript too short)
+    history = append_score_history(history, project, _qa(industrial_score=72))
+    # third round measures again — delta must compare against 45, not 0 or None
+    history = append_score_history(
+        history, project, _qa(industrial_score=80), readability_score=60
+    )
+
+    assert history["entries"][-1]["readability_score"] == 60
+    assert history["entries"][-1]["readability_delta"] == 15
+    assert history["entries"][1]["readability_score"] is None
+    assert history["entries"][1]["readability_delta"] is None
+
+
+def test_append_readability_score_is_optional_and_defaults_to_none():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(history, project, _qa(industrial_score=78))
+
+    entry = history["entries"][0]
+    assert entry["readability_score"] is None
+    assert entry["readability_delta"] is None
+
+
+def test_append_readability_score_handles_invalid_input_gracefully():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=78),
+        readability_score="not-a-number",  # type: ignore[arg-type]
+    )
+
+    assert history["entries"][0]["readability_score"] is None
+    assert history["entries"][0]["readability_delta"] is None
+
+
+def test_render_markdown_includes_readability_column_when_any_entry_has_it():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        readability_score=45,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=82),
+        readability_score=62,
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "Lesbarkeit" in rendered
+    assert "45/100" in rendered
+    assert "62/100 (+17)" in rendered
+
+
+def test_render_markdown_omits_readability_column_when_no_entry_has_it():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(history, project, _qa(industrial_score=78))
+    history = append_score_history(history, project, _qa(industrial_score=82))
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "Lesbarkeit" not in rendered.split("## Top-Fixes")[0]
+
+
+def test_render_markdown_readability_column_uses_dash_for_missing_entries():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        readability_score=55,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=75),
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "Lesbarkeit" in rendered
+    rows = [line for line in rendered.split("\n") if line.startswith("| 2026-05-11")]
+    assert rows and " | - | " in rows[0]
+
+
+def test_render_markdown_readability_negative_delta_rendered_with_minus():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        readability_score=70,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=72),
+        readability_score=50,
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "50/100 (-20)" in rendered
+
+
+def test_render_markdown_readability_zero_delta_rendered_as_plus_minus_zero():
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        readability_score=60,
+        now=datetime(2026, 5, 10, 9, 0, 0),
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=72),
+        readability_score=60,
+        now=datetime(2026, 5, 11, 9, 0, 0),
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    assert "60/100 (±0)" in rendered
+
+
+def test_render_markdown_all_four_metric_columns_side_by_side():
+    """When every optional metric is present, all columns appear in the header."""
+    project = _project()
+    history = load_score_history(project.root / "score_history.json", project.project_id)
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=70),
+        arc_score=60,
+        positioning_score=55,
+        balance_score=70,
+        readability_score=58,
+    )
+    history = append_score_history(
+        history,
+        project,
+        _qa(industrial_score=80),
+        arc_score=85,
+        positioning_score=80,
+        balance_score=95,
+        readability_score=72,
+    )
+
+    rendered = render_score_history_markdown(project, history)
+
+    header = [line for line in rendered.split("\n") if line.startswith("| Datum")]
+    assert header
+    assert "Arc" in header[0]
+    assert "Positionierung" in header[0]
+    assert "Balance" in header[0]
+    assert "Lesbarkeit" in header[0]
