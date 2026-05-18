@@ -1890,3 +1890,163 @@ def test_render_beginner_summary_top_chapter_balance_handles_partial_payload():
     assert "Kapitel 6 — Kapitel 6" in section
     assert "4×" in section
     assert "Splitten." in section
+
+
+# ─── readability_highlight ────────────────────────────────────────────
+
+
+def test_render_beginner_summary_readability_section_present_in_target():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "overall_fre": 65.4,
+        "level_label": "Mittel (B1/B2)",
+        "target_min": 50,
+        "target_max": 80,
+        "in_target": True,
+        "overall_fix": "",
+        "weakest_label": "",
+        "weakest_fre": None,
+        "weakest_fix": "",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        readability_highlight=highlight,
+    )
+    assert "## Lesbarkeit" in summary
+    assert "65.4" in summary
+    assert "Mittel (B1/B2)" in summary
+    assert "FRE 50-80" in summary
+    assert "readability.md" in summary
+
+
+def test_render_beginner_summary_readability_section_absent_when_none():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        readability_highlight=None,
+    )
+    assert "## Lesbarkeit" not in summary
+    empty = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        readability_highlight={},
+    )
+    assert "## Lesbarkeit" not in empty
+
+
+def test_render_beginner_summary_readability_section_flags_below_band():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "overall_fre": 28.0,
+        "level_label": "Sehr schwer (C2/akademisch)",
+        "target_min": 50,
+        "target_max": 80,
+        "in_target": False,
+        "overall_fix": "Saetze kuerzen.",
+        "weakest_label": "",
+        "weakest_fre": None,
+        "weakest_fix": "",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        readability_highlight=highlight,
+    )
+    assert "## Lesbarkeit" in summary
+    section_start = summary.index("## Lesbarkeit")
+    section = summary[section_start : summary.index("readability.md", section_start)]
+    # 28 is more than 20 below the lower bound (50) → 🔴 badge
+    assert "🔴" in section
+    assert "zu schwer" in section
+    assert "Saetze kuerzen." in section
+
+
+def test_render_beginner_summary_readability_section_flags_above_band():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "overall_fre": 95.0,
+        "level_label": "Sehr leicht (A1/A2)",
+        "target_min": 50,
+        "target_max": 80,
+        "in_target": False,
+        "overall_fix": "",
+        "weakest_label": "",
+        "weakest_fre": None,
+        "weakest_fix": "",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        readability_highlight=highlight,
+    )
+    section_start = summary.index("## Lesbarkeit")
+    section = summary[section_start : summary.index("readability.md", section_start)]
+    # 95 is 15 above upper bound (80), within ±20 → 🟡 review badge
+    assert "🟡" in section
+    assert "sehr einfach" in section
+
+
+def test_render_beginner_summary_readability_section_uses_review_badge_for_near_miss():
+    """Slightly outside the band (<=20 deviation) gets the yellow badge."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "overall_fre": 45.0,  # 5 below lower bound
+        "level_label": "Mittel schwer (B2)",
+        "target_min": 50,
+        "target_max": 80,
+        "in_target": False,
+        "overall_fix": "",
+        "weakest_label": "",
+        "weakest_fre": None,
+        "weakest_fix": "",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        readability_highlight=highlight,
+    )
+    section_start = summary.index("## Lesbarkeit")
+    section = summary[section_start : summary.index("readability.md", section_start)]
+    assert "🟡" in section
+    assert "🔴" not in section
+
+
+def test_render_beginner_summary_readability_section_surfaces_weakest_chapter():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {
+        "overall_fre": 55.0,
+        "level_label": "Mittel schwer (B2)",
+        "target_min": 50,
+        "target_max": 80,
+        "in_target": True,
+        "overall_fix": "",
+        "weakest_label": "Die Methode",
+        "weakest_fre": 32.0,
+        "weakest_fix": "Kuerze lange Saetze.",
+    }
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        readability_highlight=highlight,
+    )
+    section_start = summary.index("## Lesbarkeit")
+    section = summary[section_start : summary.index("readability.md", section_start)]
+    assert "Schwaechstes Kapitel" in section
+    assert "Die Methode" in section
+    assert "FRE 32" in section
+    assert "Kuerze lange Saetze." in section
+
+
+def test_render_beginner_summary_readability_section_handles_partial_payload():
+    """Missing optional keys must not crash; section still renders."""
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    highlight = {"overall_fre": 60.0, "target_min": 50, "target_max": 80, "in_target": True}
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        readability_highlight=highlight,
+    )
+    assert "## Lesbarkeit" in summary
+    assert "60.0" in summary

@@ -1090,6 +1090,114 @@ def _render_amazon_html_preview(
     return lines
 
 
+def _render_readability_highlight(
+    readability_highlight: dict[str, Any] | None,
+) -> list[str]:
+    """Render the 'Lesbarkeit' block from a readability highlight payload.
+
+    Surfaces the aggregate Amstad-FRE score with its German level label
+    plus the single weakest chapter so the author sees in one glance
+    whether the prose matches the target audience. Skips the section
+    entirely when no measurable signal exists (``readability_highlight``
+    is ``None`` or empty) — no point telling the author "FRE 0.0"
+    before the manuscript carries text.
+
+    The dict is expected to carry ``overall_fre``, ``level_label``,
+    ``target_min``, ``target_max``, ``in_target``, ``overall_fix``,
+    ``weakest_label``, ``weakest_fre`` and ``weakest_fix``. Missing keys
+    are tolerated — partial payloads are rendered with the available
+    fields.
+    """
+
+    if not readability_highlight:
+        return []
+    try:
+        overall_fre = float(readability_highlight.get("overall_fre") or 0.0)
+    except (TypeError, ValueError):
+        return []
+    target_min = int(readability_highlight.get("target_min") or 0)
+    target_max = int(readability_highlight.get("target_max") or 0)
+    level_label = str(readability_highlight.get("level_label") or "").strip()
+    in_target = bool(readability_highlight.get("in_target"))
+    overall_fix = str(readability_highlight.get("overall_fix") or "").strip()
+
+    if in_target:
+        badge = SCORE_BADGE_READY
+        target_note = (
+            f"Im Ziel-Band **FRE {target_min}-{target_max}** "
+            "(populaeres deutsches Sachbuch, B1-B2)."
+        )
+    else:
+        # 20 points outside the band counts as "weit ausserhalb" — same
+        # threshold the readability report itself uses for its 🔴 badge.
+        outside_hard = (
+            overall_fre < target_min - 20 or overall_fre > target_max + 20
+        )
+        badge = SCORE_BADGE_FIX if outside_hard else SCORE_BADGE_REVIEW
+        if overall_fre < target_min:
+            target_note = (
+                f"Unter dem Ziel-Band **FRE {target_min}-{target_max}** — "
+                "die Sprache liest sich zu schwer fuer ein populaeres Sachbuch."
+            )
+        elif overall_fre > target_max:
+            target_note = (
+                f"Ueber dem Ziel-Band **FRE {target_min}-{target_max}** — "
+                "die Sprache liest sich sehr einfach. Pruefe die Zielgruppen-Tiefe."
+            )
+        else:
+            target_note = f"Ziel-Band: **FRE {target_min}-{target_max}**."
+
+    lines: list[str] = [
+        "## Lesbarkeit",
+        "",
+        (
+            "Misst die Sprache deines Buches gegen den durchschnittlichen "
+            "Sachbuch-Leser (Amstad-FRE)."
+        ),
+        "",
+        f"- {badge} Gesamt-FRE: **{overall_fre:.1f}**"
+        + (f" — {level_label}" if level_label else ""),
+        f"- {target_note}",
+    ]
+
+    weakest_label = str(readability_highlight.get("weakest_label") or "").strip()
+    weakest_fix = str(readability_highlight.get("weakest_fix") or "").strip()
+    weakest_fre_raw = readability_highlight.get("weakest_fre")
+    weakest_fre: float | None
+    try:
+        weakest_fre = (
+            float(weakest_fre_raw) if weakest_fre_raw is not None else None
+        )
+    except (TypeError, ValueError):
+        weakest_fre = None
+
+    if weakest_label and weakest_fix:
+        fre_suffix = (
+            f" (FRE {weakest_fre:.0f})" if weakest_fre is not None else ""
+        )
+        lines.extend([
+            "",
+            "**Schwaechstes Kapitel (Lesbarkeit):**",
+            "",
+            f"- **{weakest_label}**{fre_suffix}",
+            f"> {weakest_fix}",
+        ])
+    elif overall_fix and not in_target:
+        lines.extend([
+            "",
+            "**Top-Fix:**",
+            "",
+            f"> {overall_fix}",
+        ])
+
+    lines.extend([
+        "",
+        "Vollstaendige Pro-Kapitel-Tabelle siehe `readability.md`.",
+        "",
+    ])
+    return lines
+
+
 def _render_llm_fallback_notice(
     llm_fallback: dict[str, Any] | None,
 ) -> list[str]:
@@ -1357,6 +1465,7 @@ def render_beginner_summary(
     persona_match: dict[str, Any] | None = None,
     llm_fallback: dict[str, Any] | None = None,
     amazon_html_preview: dict[str, Any] | None = None,
+    readability_highlight: dict[str, Any] | None = None,
 ) -> str:
     decision = str(report.get("decision", "HOLD"))
     light, plain_decision = _traffic_light(decision)
@@ -1430,6 +1539,7 @@ def render_beginner_summary(
     lines.extend(_render_top_rewrite(top_rewrite))
     lines.extend(_render_top_kdp_keywords(top_kdp_keywords))
     lines.extend(_render_amazon_html_preview(amazon_html_preview))
+    lines.extend(_render_readability_highlight(readability_highlight))
 
     lines.extend([
         "## Was bedeutet das praktisch?",

@@ -1848,3 +1848,164 @@ def test_balance_score_ignores_non_dict_balance():
         "balance": "not-a-dict",
     }
     assert _balance_score(payload) is None
+
+
+# ─── _readability_highlight_payload ────────────────────────────────────
+
+
+from modules.pipeline import (
+    READABILITY_HIGHLIGHT_MIN_WORDS,
+    _readability_highlight_payload,
+)
+
+
+def _readability_json(
+    *,
+    fre: float = 65.0,
+    word_count: int = 200,
+    level_label: str = "Mittel (B1/B2)",
+    overall_fix: str = "",
+    target_min: int = 50,
+    target_max: int = 80,
+    chapters: list[dict] | None = None,
+    weakest_index: int | None = None,
+) -> dict:
+    return {
+        "overall": {
+            "label": "Gesamt",
+            "fre_score": fre,
+            "word_count": word_count,
+            "level_label": level_label,
+            "fix": overall_fix,
+        },
+        "chapters": chapters or [],
+        "target_min": target_min,
+        "target_max": target_max,
+        "weakest_index": weakest_index,
+    }
+
+
+def test_readability_highlight_payload_returns_none_for_empty_input():
+    assert _readability_highlight_payload(None) is None
+    assert _readability_highlight_payload({}) is None
+
+
+def test_readability_highlight_payload_skips_when_word_count_below_min():
+    payload = _readability_highlight_payload(
+        _readability_json(
+            fre=70.0, word_count=READABILITY_HIGHLIGHT_MIN_WORDS - 1
+        )
+    )
+    assert payload is None
+
+
+def test_readability_highlight_payload_returns_none_when_fre_missing():
+    raw = _readability_json()
+    raw["overall"]["fre_score"] = None
+    assert _readability_highlight_payload(raw) is None
+
+
+def test_readability_highlight_payload_returns_none_when_fre_not_numeric():
+    raw = _readability_json()
+    raw["overall"]["fre_score"] = "not-a-number"
+    assert _readability_highlight_payload(raw) is None
+
+
+def test_readability_highlight_payload_reports_in_target_band():
+    raw = _readability_json(fre=62.3, target_min=50, target_max=80)
+    payload = _readability_highlight_payload(raw)
+    assert payload is not None
+    assert payload["overall_fre"] == 62.3
+    assert payload["in_target"] is True
+    assert payload["target_min"] == 50
+    assert payload["target_max"] == 80
+    assert payload["level_label"] == "Mittel (B1/B2)"
+    assert payload["weakest_label"] == ""
+    assert payload["weakest_fre"] is None
+    assert payload["weakest_fix"] == ""
+
+
+def test_readability_highlight_payload_flags_below_band():
+    raw = _readability_json(
+        fre=38.0,
+        target_min=50,
+        target_max=80,
+        overall_fix="Saetze kuerzen.",
+    )
+    payload = _readability_highlight_payload(raw)
+    assert payload is not None
+    assert payload["overall_fre"] == 38.0
+    assert payload["in_target"] is False
+    assert payload["overall_fix"] == "Saetze kuerzen."
+
+
+def test_readability_highlight_payload_flags_above_band():
+    raw = _readability_json(fre=91.5, target_min=50, target_max=80)
+    payload = _readability_highlight_payload(raw)
+    assert payload is not None
+    assert payload["in_target"] is False
+    assert payload["overall_fre"] == 91.5
+
+
+def test_readability_highlight_payload_carries_weakest_chapter():
+    raw = _readability_json(
+        fre=55.0,
+        target_min=50,
+        target_max=80,
+        weakest_index=3,
+        chapters=[
+            {
+                "index": 1,
+                "label": "Vorwort",
+                "fre_score": 70.0,
+                "fix": "",
+            },
+            {
+                "index": 3,
+                "label": "Die Methode",
+                "fre_score": 28.4,
+                "fix": "Die Methode liest sich zu schwer.",
+            },
+        ],
+    )
+    payload = _readability_highlight_payload(raw)
+    assert payload is not None
+    assert payload["weakest_label"] == "Die Methode"
+    assert payload["weakest_fre"] == 28.4
+    assert payload["weakest_fix"] == "Die Methode liest sich zu schwer."
+
+
+def test_readability_highlight_payload_handles_partial_chapter_dict():
+    raw = _readability_json(
+        fre=55.0,
+        weakest_index=2,
+        chapters=[{"index": 2}],  # no label/fre/fix
+    )
+    payload = _readability_highlight_payload(raw)
+    assert payload is not None
+    assert payload["weakest_label"] == ""
+    assert payload["weakest_fre"] is None
+    assert payload["weakest_fix"] == ""
+
+
+def test_readability_highlight_payload_is_immutable_against_caller_mutation():
+    raw = _readability_json(fre=60.0)
+    payload = _readability_highlight_payload(raw)
+    assert payload is not None
+    payload["overall_fre"] = 999.9
+    fresh = _readability_highlight_payload(raw)
+    assert fresh is not None
+    assert fresh["overall_fre"] == 60.0
+
+
+def test_readability_highlight_payload_skips_when_weakest_index_not_in_chapters():
+    """Weakest index pointing to a missing chapter must not crash."""
+    raw = _readability_json(
+        fre=55.0,
+        weakest_index=99,
+        chapters=[{"index": 1, "label": "X", "fre_score": 70.0, "fix": ""}],
+    )
+    payload = _readability_highlight_payload(raw)
+    assert payload is not None
+    assert payload["weakest_label"] == ""
+    assert payload["weakest_fix"] == ""

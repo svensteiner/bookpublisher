@@ -780,6 +780,92 @@ def _weakest_sample_payload(sample_json: dict | None) -> dict | None:
     return payload[0] if payload else None
 
 
+# Words required before the Amstad FRE score is treated as a measurable
+# signal in the beginner summary. Below this the score is mathematically
+# defined but not meaningful (a 20-word preface can swing the index by
+# 40+ points). We mirror ``MIN_BODY_WORDS_FOR_SIGNAL`` from
+# ``modules.readability`` without importing it here to keep this module
+# free of upstream coupling.
+READABILITY_HIGHLIGHT_MIN_WORDS: int = 60
+
+
+def _readability_highlight_payload(
+    readability_json: dict | None,
+) -> dict | None:
+    """Compact German FRE highlight for beginner_summary.
+
+    Surfaces the aggregate Amstad-FRE plus the single weakest chapter so
+    the author sees in round 1 whether the prose matches the target
+    audience. Returns ``None`` when the manuscript was empty or too
+    short for a meaningful measurement — no point telling the author
+    "FRE 0.0" before they have written anything.
+
+    The payload carries:
+
+    - ``overall_fre`` (float, rounded to 1 decimal)
+    - ``level_label`` (German Amstad band, e.g. "Mittel (B1/B2)")
+    - ``target_min`` / ``target_max`` (configurable band, defaults 50/80)
+    - ``in_target`` (bool — overall FRE inside the target band)
+    - ``overall_fix`` (str — empty when the score sits inside the band)
+    - ``weakest_label`` / ``weakest_fre`` / ``weakest_fix`` (the worst
+      chapter outside the band, or empty values when every chapter is
+      in target).
+
+    Skipping the section entirely when there is nothing measurable keeps
+    the summary honest — a hint about readability before chapter text
+    exists would be cargo-cult tooling.
+    """
+
+    if not readability_json:
+        return None
+    overall = readability_json.get("overall") or {}
+    word_count = int(overall.get("word_count") or 0)
+    if word_count < READABILITY_HIGHLIGHT_MIN_WORDS:
+        return None
+    fre_raw = overall.get("fre_score")
+    if fre_raw is None:
+        return None
+    try:
+        overall_fre = float(fre_raw)
+    except (TypeError, ValueError):
+        return None
+    target_min = int(readability_json.get("target_min") or 0)
+    target_max = int(readability_json.get("target_max") or 0)
+    in_target = bool(
+        target_min and target_max and target_min <= overall_fre <= target_max
+    )
+    overall_fix = str(overall.get("fix") or "").strip()
+    weakest_label = ""
+    weakest_fre: float | None = None
+    weakest_fix = ""
+    weakest_index = readability_json.get("weakest_index")
+    if weakest_index is not None:
+        for chap in readability_json.get("chapters") or []:
+            if chap.get("index") == weakest_index:
+                weakest_label = str(chap.get("label") or "").strip()
+                raw_fre = chap.get("fre_score")
+                if raw_fre is not None:
+                    try:
+                        weakest_fre = float(raw_fre)
+                    except (TypeError, ValueError):
+                        weakest_fre = None
+                weakest_fix = str(chap.get("fix") or "").strip()
+                break
+    return {
+        "overall_fre": round(overall_fre, 1),
+        "level_label": str(overall.get("level_label") or "").strip(),
+        "target_min": target_min,
+        "target_max": target_max,
+        "in_target": in_target,
+        "overall_fix": overall_fix,
+        "weakest_label": weakest_label,
+        "weakest_fre": (
+            round(weakest_fre, 1) if weakest_fre is not None else None
+        ),
+        "weakest_fix": weakest_fix,
+    }
+
+
 class PublisherPipeline:
     def __init__(self, config: AppConfig, logger: RunLogger):
         self.config = config
@@ -1016,6 +1102,17 @@ class PublisherPipeline:
             persona_match_highlight = _persona_match_payload(persona_match)
             amazon_html_snippet = build_amazon_description_html(project)
             amazon_html_preview = _amazon_html_preview_payload(amazon_html_snippet)
+            readability_md: str | None = None
+            readability_json: dict | None = None
+            try:
+                readability_md, readability_json = readability_review(project)
+            except RuntimeError as exc:
+                self.logger.log(
+                    "readability_skipped",
+                    project_id=project.project_id,
+                    reason=str(exc),
+                )
+            readability_highlight = _readability_highlight_payload(readability_json)
             self.writer.write_text(
                 "beginner_summary.md",
                 render_beginner_summary(
@@ -1035,14 +1132,14 @@ class PublisherPipeline:
                     persona_match=persona_match_highlight,
                     llm_fallback=self.llm.fallback_summary(),
                     amazon_html_preview=amazon_html_preview,
+                    readability_highlight=readability_highlight,
                 ),
                 project.project_id,
             )
             if chapter_md is not None and chapter_json is not None:
                 self.writer.write_text("chapter_review.md", chapter_md, project.project_id)
                 self.writer.write_json("chapter_review.json", chapter_json, project.project_id)
-            try:
-                readability_md, readability_json = readability_review(project)
+            if readability_md is not None and readability_json is not None:
                 self.writer.write_text(
                     "readability.md", readability_md, project.project_id
                 )
@@ -1054,12 +1151,6 @@ class PublisherPipeline:
                     project_id=project.project_id,
                     fre_score=readability_json.get("overall", {}).get("fre_score"),
                     weakest_index=readability_json.get("weakest_index"),
-                )
-            except RuntimeError as exc:
-                self.logger.log(
-                    "readability_skipped",
-                    project_id=project.project_id,
-                    reason=str(exc),
                 )
             if arc_md is not None and arc_json is not None:
                 self.writer.write_text("chapter_arc.md", arc_md, project.project_id)
