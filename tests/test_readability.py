@@ -294,6 +294,42 @@ class TestRenderReadabilityMarkdown:
             assert "## Konkrete Fixes" in md
 
 
+class TestReadabilityReviewBandPropagation:
+    """``readability_review`` is the public surface used by the pipeline.
+    These tests pin down that the configurable target band kwargs travel
+    through the review wrapper unchanged — a regression would silently
+    drop AppConfig.readability_target_min/max on the floor.
+    """
+
+    def _stub_project(self):
+        from pathlib import Path
+
+        from modules.discovery import BookProject
+
+        return BookProject(
+            project_id="stub",
+            root=Path("."),
+            manuscript=None,
+            title="Stub",
+        )
+
+    def test_default_band_is_50_80(self):
+        from modules.review import readability_review
+
+        _, payload = readability_review(self._stub_project())
+        assert payload["target_min"] == 50
+        assert payload["target_max"] == 80
+
+    def test_custom_band_propagates_to_payload(self):
+        from modules.review import readability_review
+
+        _, payload = readability_review(
+            self._stub_project(), target_min=30, target_max=55
+        )
+        assert payload["target_min"] == 30
+        assert payload["target_max"] == 55
+
+
 class TestReadabilityMetricImmutability:
     def test_metric_is_frozen(self):
         metric = ReadabilityMetric(

@@ -177,3 +177,107 @@ def test_weakest_sample_limit_clamps_below_one():
         extra="beginner_summary_weakest_sample_limit: 0\n",
     )
     assert loaded.beginner_summary_weakest_sample_limit == 1
+
+
+def test_readability_target_band_defaults_to_50_80():
+    """Default Amstad band matches populaeres deutsches Sachbuch (B1/B2)."""
+    loaded = _minimal_config("config_readability_default")
+    assert loaded.readability_target_min == 50
+    assert loaded.readability_target_max == 80
+
+
+def test_readability_target_band_reads_yaml_values():
+    """Authors of Fachbuecher can lower the band so the QA gate stops
+    flagging dense paragraphs as 'too hard'."""
+    loaded = _minimal_config(
+        "config_readability_fachbuch",
+        extra=(
+            "readability_target_min: 30\n"
+            "readability_target_max: 55\n"
+        ),
+    )
+    assert loaded.readability_target_min == 30
+    assert loaded.readability_target_max == 55
+
+
+def test_readability_target_band_lifestyle_book():
+    """Authors of lifestyle nonfiction can raise the band so the gate
+    flags passages that feel too academic for the audience."""
+    loaded = _minimal_config(
+        "config_readability_lifestyle",
+        extra=(
+            "readability_target_min: 65\n"
+            "readability_target_max: 95\n"
+        ),
+    )
+    assert loaded.readability_target_min == 65
+    assert loaded.readability_target_max == 95
+
+
+def test_readability_target_band_clamps_below_hard_min():
+    """Values below the Amstad hard floor (10) clamp into the sane range
+    so the QA gate keeps producing meaningful target hints."""
+    loaded = _minimal_config(
+        "config_readability_below_floor",
+        extra=(
+            "readability_target_min: -5\n"
+            "readability_target_max: 25\n"
+        ),
+    )
+    assert loaded.readability_target_min == 10
+    assert loaded.readability_target_max == 25
+
+
+def test_readability_target_band_clamps_above_hard_max():
+    """Values above 100 clamp to 100 — the Amstad formula stops producing
+    meaningful results above that ceiling for German text."""
+    loaded = _minimal_config(
+        "config_readability_above_ceiling",
+        extra=(
+            "readability_target_min: 70\n"
+            "readability_target_max: 250\n"
+        ),
+    )
+    assert loaded.readability_target_min == 70
+    assert loaded.readability_target_max == 100
+
+
+def test_readability_target_band_falls_back_when_degenerate():
+    """When min >= max (typo or clamping collapse), the band falls back
+    to the canonical 50/80 default instead of failing the run."""
+    loaded = _minimal_config(
+        "config_readability_degenerate",
+        extra=(
+            "readability_target_min: 90\n"
+            "readability_target_max: 60\n"
+        ),
+    )
+    assert loaded.readability_target_min == 50
+    assert loaded.readability_target_max == 80
+
+
+def test_readability_target_band_falls_back_when_equal():
+    """A zero-width band (min == max) is degenerate — fall back to default."""
+    loaded = _minimal_config(
+        "config_readability_zero_width",
+        extra=(
+            "readability_target_min: 70\n"
+            "readability_target_max: 70\n"
+        ),
+    )
+    assert loaded.readability_target_min == 50
+    assert loaded.readability_target_max == 80
+
+
+def test_readability_target_band_falls_back_when_nonnumeric():
+    """Non-numeric YAML values fall back to defaults rather than crashing
+    the config loader — protects against typos like 'fifty'/'eighty'."""
+    loaded = _minimal_config(
+        "config_readability_nonnumeric",
+        extra=(
+            "readability_target_min: fifty\n"
+            "readability_target_max: eighty\n"
+        ),
+    )
+    assert loaded.readability_target_min == 50
+    assert loaded.readability_target_max == 80

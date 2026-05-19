@@ -1115,7 +1115,11 @@ class PublisherPipeline:
             readability_md: str | None = None
             readability_json: dict | None = None
             try:
-                readability_md, readability_json = readability_review(project)
+                readability_md, readability_json = readability_review(
+                    project,
+                    target_min=self.config.readability_target_min,
+                    target_max=self.config.readability_target_max,
+                )
             except RuntimeError as exc:
                 self.logger.log(
                     "readability_skipped",

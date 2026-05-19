@@ -25,6 +25,42 @@ def _clamp_float(value: Any, *, low: float, high: float) -> float:
     return max(low, min(high, coerced))
 
 
+# Sane outer bounds for an Amstad-FRE target band. Below 10 the text is
+# pure academic prose (no popular nonfiction reads that low); above 100
+# the Amstad formula stops producing meaningful values for German.
+_FRE_TARGET_HARD_MIN: int = 10
+_FRE_TARGET_HARD_MAX: int = 100
+_FRE_TARGET_DEFAULT_MIN: int = 50
+_FRE_TARGET_DEFAULT_MAX: int = 80
+
+
+def _readability_target_band(data: dict[str, Any]) -> tuple[int, int]:
+    """Resolve the readability target band from raw YAML data.
+
+    Returns ``(min, max)`` after clamping each side into the Amstad sane
+    range. When the resolved band is degenerate (``min >= max``) — either
+    from a typo or from clamping collapsing two adjacent values — the
+    band falls back to the canonical 50/80 default so the QA gate stays
+    usable instead of failing the run with a confusing error.
+    """
+
+    raw_min = data.get("readability_target_min", _FRE_TARGET_DEFAULT_MIN)
+    raw_max = data.get("readability_target_max", _FRE_TARGET_DEFAULT_MAX)
+    try:
+        target_min = int(raw_min)
+    except (TypeError, ValueError):
+        target_min = _FRE_TARGET_DEFAULT_MIN
+    try:
+        target_max = int(raw_max)
+    except (TypeError, ValueError):
+        target_max = _FRE_TARGET_DEFAULT_MAX
+    target_min = max(_FRE_TARGET_HARD_MIN, min(_FRE_TARGET_HARD_MAX, target_min))
+    target_max = max(_FRE_TARGET_HARD_MIN, min(_FRE_TARGET_HARD_MAX, target_max))
+    if target_min >= target_max:
+        return _FRE_TARGET_DEFAULT_MIN, _FRE_TARGET_DEFAULT_MAX
+    return target_min, target_max
+
+
 @dataclass(frozen=True)
 class AppConfig:
     project_root: Path
@@ -90,6 +126,16 @@ class AppConfig:
     # Kindle preview signal a cluster issue rather than a single weak passage.
     # Clamped to [1, sample_scan_max_sections] downstream (max 10 here).
     beginner_summary_weakest_sample_limit: int = 1
+    # Amstad-FRE readability target band. Default 50-80 fits popular German
+    # nonfiction (B1/B2 reading level). Authors of academic Fachbuecher can
+    # lower the band (e.g. 30-50 — Wissenschaftssprache) so the QA gate
+    # stops flagging dense paragraphs as "too hard". Authors of lifestyle
+    # nonfiction can raise it (e.g. 60-90 — sehr leicht) so the gate flags
+    # passages that feel too academic for the audience. The loader enforces
+    # ``min < max`` and clamps both into a sane Amstad range — out-of-band
+    # values fall back to the default 50/80 instead of failing the run.
+    readability_target_min: int = 50
+    readability_target_max: int = 80
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -113,6 +159,8 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         key: [ext.lower() for ext in value]
         for key, value in supported.items()
     }
+
+    readability_min, readability_max = _readability_target_band(data)
 
     return AppConfig(
         project_root=PROJECT_ROOT,
@@ -154,5 +202,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
             1,
             min(10, int(data.get("beginner_summary_weakest_sample_limit", 1))),
         ),
+        readability_target_min=readability_min,
+        readability_target_max=readability_max,
         raw=data,
     )

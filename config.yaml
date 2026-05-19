@@ -60,6 +60,18 @@ beginner_summary_weakest_limit: 3
 # issue rather than a single weak passage. Clamped to [1, 10].
 beginner_summary_weakest_sample_limit: 1
 
+# Amstad-FRE readability target band for the QA gate. Default 50-80 fits
+# popular German nonfiction (B1/B2 reading level).
+#   * Fachbuch / akademisch: 30-55  (Wissenschaftssprache; dichte Saetze
+#     sollen nicht als "zu schwer" markiert werden).
+#   * Populaeres Sachbuch:   50-80  (Standard — passt zu KDP-Bestsellern).
+#   * Lifestyle / Ratgeber:  60-90  (sehr leicht; Marker schlaegt aus,
+#     sobald ein Kapitel zu akademisch wirkt).
+# Values are clamped into [10, 100]. When min >= max, the loader falls
+# back to the canonical 50/80 default so a typo cannot break the run.
+readability_target_min: 50
+readability_target_max: 80
+
 read_only: true
 artifact_mirror_single_project: true
 skills_directory: skills
