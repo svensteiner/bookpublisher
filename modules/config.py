@@ -136,6 +136,14 @@ class AppConfig:
     # values fall back to the default 50/80 instead of failing the run.
     readability_target_min: int = 50
     readability_target_max: int = 80
+    # Optional matplotlib-backed PNG render of score_history.json.
+    # Off by default: matplotlib is not in the install set, enabling it
+    # bloats the Windows EXE for users who only consume the markdown
+    # report. When enabled, the pipeline writes
+    # ``artifacts/<project>/score_history.png`` after each round; if
+    # matplotlib is missing the run continues and a single warning is
+    # logged instead of crashing.
+    score_history_graph_enabled: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -204,5 +212,6 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         ),
         readability_target_min=readability_min,
         readability_target_max=readability_max,
+        score_history_graph_enabled=bool(data.get("score_history_graph_enabled", False)),
         raw=data,
     )

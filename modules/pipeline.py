@@ -61,6 +61,10 @@ from modules.score_history import (
     load_score_history,
     render_score_history_markdown,
 )
+from modules.score_history_graph import (
+    build_chart_dataset,
+    render_history_chart_png,
+)
 
 
 def _weakest_chapter_payload(
@@ -1327,6 +1331,23 @@ class PublisherPipeline:
                 industrial_score=qa.get("industrial_score"),
             )
 
+            if self.config.score_history_graph_enabled:
+                chart_dataset = build_chart_dataset(
+                    history,
+                    project_title=project.title,
+                )
+                chart_path = (
+                    self.writer.project_dir(project.project_id) / "score_history.png"
+                )
+                result = render_history_chart_png(chart_dataset, chart_path)
+                self.logger.log(
+                    "score_history_graph",
+                    project_id=project.project_id,
+                    success=result.success,
+                    output_path=str(result.output_path) if result.output_path else None,
+                    message=result.message,
+                )
+
             if delta is not None:
                 self.writer.write_text(
                     "round_delta.md",
@@ -1384,6 +1405,7 @@ class PublisherPipeline:
             "round_delta.json",
             "score_history.json",
             "score_history.md",
+            "score_history.png",
         ]:
             self._mirror_if_single(projects, filename)
         return projects

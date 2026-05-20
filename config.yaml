@@ -72,6 +72,13 @@ beginner_summary_weakest_sample_limit: 1
 readability_target_min: 50
 readability_target_max: 80
 
+# Optional matplotlib-backed PNG render of the score history. Off by
+# default because matplotlib is not in the install set and would bloat
+# the Windows EXE. Enable with `score_history_graph_enabled: true` and
+# `pip install matplotlib` to get `artifacts/<project>/score_history.png`
+# after every QA round.
+score_history_graph_enabled: false
+
 read_only: true
 artifact_mirror_single_project: true
 skills_directory: skills

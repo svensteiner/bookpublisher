@@ -42,6 +42,7 @@ QUICK_ROUND_ARTIFACTS = [
     "sample_scan.json",
     "score_history.md",
     "score_history.json",
+    "score_history.png",
 ]
 
 FULL_ROUND_ARTIFACTS = [
