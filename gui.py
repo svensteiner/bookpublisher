@@ -2,15 +2,41 @@ from __future__ import annotations
 
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from modules.config import ConfigError, load_config
+from modules.launcher_paths import resolve_default_input_path
 from modules.pipeline import PublisherPipeline
 from modules.readers import ManuscriptReadError
 from modules.run_logger import RunLogger
+
+
+def _launcher_app_dir() -> Path:
+    """Best-effort: directory containing the launched executable.
+
+    When running from PyInstaller, ``sys.executable`` points at the
+    bundled EXE next to ``beispielbuch/``. From source, ``sys.argv[0]``
+    (the script path) is the closest equivalent. Both are wrapped in a
+    Path; resolution failures surface as ``Path.cwd()`` so the caller
+    always has a usable directory.
+    """
+
+    candidate: str | None = None
+    if getattr(sys, "frozen", False):
+        candidate = sys.executable
+    elif sys.argv and sys.argv[0]:
+        candidate = sys.argv[0]
+    if not candidate:
+        return Path.cwd()
+    path = Path(candidate)
+    try:
+        return path.resolve().parent
+    except OSError:
+        return Path.cwd()
 
 
 DIALOG_TITLE_MANUSCRIPT = "Manuskript konnte nicht gelesen werden"
@@ -42,7 +68,12 @@ class PublisherGui(tk.Tk):
         self.minsize(820, 580)
 
         self.config_data = load_config()
-        self.selected_path = tk.StringVar(value=str(self.config_data.default_input_path))
+        initial_path = resolve_default_input_path(
+            self.config_data.default_input_path,
+            app_dir=_launcher_app_dir(),
+            cwd=Path.cwd(),
+        )
+        self.selected_path = tk.StringVar(value=str(initial_path))
         self.full_review = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Bereit.")
         self.last_report_dir: Path | None = None
