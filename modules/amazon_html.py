@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from html import escape
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Sequence
 
 from modules.discovery import BookProject
 from modules.rewrites import (
@@ -39,6 +39,15 @@ BULLET_MAX_CHARS: int = 140
 MIN_BULLETS: int = 4
 MAX_BULLETS: int = 6
 DEFAULT_BULLET_COUNT: int = 5
+
+# Maximum number of chapter titles to forward to the LLM bullet extractor.
+# Keeping this small keeps the prompt cheap and forces the LLM to pick the
+# strongest selling points instead of mirroring the table of contents.
+LLM_BULLETS_MAX_CHAPTER_TITLES: int = 20
+# Hard sanity floor: an LLM bullet shorter than this is almost certainly a
+# fragment ("Praxis", "Methode") and gets dropped before we hit the
+# clipping/dedup path. Avoids one-word bullets sneaking into the HTML.
+LLM_BULLETS_MIN_CHARS: int = 16
 
 _BULLET_MARKERS: tuple[str, ...] = ("- ", "* ", "• ", "‣ ", "– ", "— ")
 _SECTION_HEADINGS: dict[str, str] = {
@@ -182,7 +191,47 @@ def _build_lead(project: BookProject, subject: str, audience: str) -> str:
     return _clip(fallback, LEAD_MAX_CHARS)
 
 
-def _select_bullets(project: BookProject, subject: str, audience: str) -> list[str]:
+def _normalize_bullet_candidates(
+    candidates: Iterable[str], *, min_chars: int = LLM_BULLETS_MIN_CHARS
+) -> list[str]:
+    """Clip, dedupe, and drop too-short candidates — pure function."""
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        if not isinstance(raw, str):
+            continue
+        clipped = _clip(raw, BULLET_MAX_CHARS)
+        if len(clipped) < min_chars:
+            continue
+        key = clipped.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(clipped)
+    return normalized
+
+
+def _select_bullets(
+    project: BookProject,
+    subject: str,
+    audience: str,
+    *,
+    llm_bullets: Sequence[str] | None = None,
+) -> list[str]:
+    """Pick the final bullet list, preferring LLM bullets when provided.
+
+    When ``llm_bullets`` carries at least ``MIN_BULLETS`` usable items, the
+    LLM output replaces the template entirely so the HTML reflects the
+    book-specific selling points. When the LLM output is shorter than
+    ``MIN_BULLETS``, we fall back to the deterministic template so the
+    Amazon page never ships a half-empty bullet list.
+    """
+
+    if llm_bullets:
+        llm_clean = _normalize_bullet_candidates(llm_bullets)
+        if len(llm_clean) >= MIN_BULLETS:
+            return llm_clean[:MAX_BULLETS]
     existing = _extract_existing_bullets(project.amazon_description or "")
     if len(existing) >= MIN_BULLETS:
         return existing[:MAX_BULLETS]
@@ -227,8 +276,20 @@ def _render_html(headline: str, lead: str, bullets: Iterable[str], audience: str
     return "\n".join(blocks)
 
 
-def build_amazon_description_html(project: BookProject) -> AmazonDescriptionHtml:
-    """Generate the KDP-compliant Amazon description HTML for a project."""
+def build_amazon_description_html(
+    project: BookProject,
+    *,
+    llm_bullets: Sequence[str] | None = None,
+) -> AmazonDescriptionHtml:
+    """Generate the KDP-compliant Amazon description HTML for a project.
+
+    When ``llm_bullets`` is provided and contains at least ``MIN_BULLETS``
+    usable items, those bullets replace the template-derived ones so the
+    Amazon description reflects book-specific selling points pulled from
+    the manuscript instead of generic anti-hype lines. The rest of the
+    snippet (headline, lead, audience, CTA, keyword score) stays
+    deterministic.
+    """
 
     subject = _extract_subject(project)
     audience = _extract_audience(project)
@@ -236,7 +297,7 @@ def build_amazon_description_html(project: BookProject) -> AmazonDescriptionHtml
 
     headline = _build_headline(project, subject, audience)
     lead = _build_lead(project, subject, audience)
-    bullets = _select_bullets(project, subject, audience)
+    bullets = _select_bullets(project, subject, audience, llm_bullets=llm_bullets)
     audience_text = _build_audience(audience)
     cta = _build_cta()
 
@@ -301,3 +362,80 @@ def render_amazon_description_report_markdown(
         "```",
     ])
     return "\n".join(lines)
+
+
+# --- Optional LLM-Pass for richer bullet extraction -----------------------
+
+LLM_BULLETS_SYSTEM_PROMPT: str = (
+    "Du bist ein erfahrener Sachbuch-Lektor fuer den deutschen KDP-Markt. "
+    "Deine Aufgabe: aus Titel, Untertitel, Beschreibung und Kapitel-Titeln "
+    "die 5 staerksten Verkaufs-Bullets fuer die Amazon-Buchbeschreibung "
+    "extrahieren. Jeder Bullet ist ein einzelner Satz auf Deutsch, max "
+    "140 Zeichen, ohne Hype, ohne Marketing-Floskeln, ohne Ausrufezeichen. "
+    "Antworte ausschliesslich als JSON mit dem Schluessel 'bullets' "
+    "(Array aus 5 Strings). Kein zusaetzlicher Text."
+)
+
+
+def build_llm_bullets_user_prompt(
+    project: BookProject,
+    chapter_titles: Sequence[str],
+) -> str:
+    """Render the user prompt for the LLM bullet extractor."""
+
+    title = (project.title or "").strip() or "(kein Titel)"
+    subtitle = (project.subtitle or "").strip() or "(kein Untertitel)"
+    description = (project.amazon_description or "").strip() or "(keine Beschreibung)"
+    chapters_capped = list(chapter_titles)[:LLM_BULLETS_MAX_CHAPTER_TITLES]
+    if chapters_capped:
+        chapter_block = "\n".join(f"- {c}" for c in chapters_capped if c)
+    else:
+        chapter_block = "(keine Kapitel-Titel verfuegbar)"
+    return (
+        f"Titel: {title}\n"
+        f"Untertitel: {subtitle}\n\n"
+        "Amazon-Beschreibung:\n"
+        f"{description}\n\n"
+        "Kapitel-Titel:\n"
+        f"{chapter_block}\n\n"
+        "Liefere genau 5 Bullets im geforderten JSON-Format."
+    )
+
+
+def _parse_llm_bullets_payload(payload: Any) -> list[str]:
+    """Extract the bullet strings from the LLM JSON response — robust to shape drift."""
+
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("bullets")
+    if not isinstance(raw, list):
+        return []
+    bullets: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            stripped = item.strip()
+            if stripped:
+                bullets.append(stripped)
+    return bullets
+
+
+def extract_amazon_bullets_via_llm(
+    project: BookProject,
+    chapter_titles: Sequence[str],
+    llm_completer: Callable[[str, str], dict[str, Any]],
+) -> list[str]:
+    """Call the LLM to extract book-specific sales bullets.
+
+    ``llm_completer`` is expected to behave like ``LLMClient.complete_json``
+    — take a system+user prompt pair and return a parsed JSON dict. Any
+    exception (network, API key, malformed JSON) is swallowed and turned
+    into an empty list so the caller can fall back to the deterministic
+    template path without aborting the pipeline.
+    """
+
+    user_prompt = build_llm_bullets_user_prompt(project, chapter_titles)
+    try:
+        payload = llm_completer(LLM_BULLETS_SYSTEM_PROMPT, user_prompt)
+    except Exception:
+        return []
+    return _parse_llm_bullets_payload(payload)

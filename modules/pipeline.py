@@ -6,6 +6,7 @@ from pathlib import Path
 from modules.agent_core import AgentMemory, SkillRegistry
 from modules.amazon_html import (
     build_amazon_description_html,
+    extract_amazon_bullets_via_llm,
     render_amazon_description_report_markdown,
 )
 from modules.artifacts import ArtifactWriter
@@ -948,6 +949,49 @@ class PublisherPipeline:
         if self.config.artifact_mirror_single_project and len(projects) == 1:
             self.writer.mirror_single_project_file(projects[0].project_id, filename)
 
+    def _maybe_extract_amazon_llm_bullets(
+        self, project: BookProject, *, chapter_titles: list[str]
+    ) -> list[str] | None:
+        """Return LLM-extracted Amazon bullets when the toggle + API key are present.
+
+        Returns ``None`` when the LLM-Pass is disabled in config OR no API
+        key is configured. Returns an empty list (still ``None``-ish for
+        the caller) only when the LLM was called but produced nothing
+        usable — both are logged so the run trace shows which path ran.
+        Never raises: any exception inside the LLM extractor is converted
+        into a logged warning so the deterministic template path takes
+        over without aborting the run.
+        """
+
+        if not self.config.amazon_html_llm_bullets_enabled:
+            return None
+        if not self.llm.api_key:
+            self.logger.log(
+                "amazon_html_llm_bullets_skipped",
+                project_id=project.project_id,
+                reason="missing_api_key",
+            )
+            return None
+        try:
+            bullets = extract_amazon_bullets_via_llm(
+                project,
+                chapter_titles,
+                self.llm.complete_json,
+            )
+        except Exception as exc:
+            self.logger.log(
+                "amazon_html_llm_bullets_failed",
+                project_id=project.project_id,
+                error=str(exc),
+            )
+            return None
+        self.logger.log(
+            "amazon_html_llm_bullets_completed",
+            project_id=project.project_id,
+            bullet_count=len(bullets),
+        )
+        return bullets or None
+
     def run_review(self, input_path: Path) -> list[BookProject]:
         projects = self.discover(input_path)
         if not projects:
@@ -1157,7 +1201,12 @@ class PublisherPipeline:
                 project.amazon_description,
             )
             persona_match_highlight = _persona_match_payload(persona_match)
-            amazon_html_snippet = build_amazon_description_html(project)
+            llm_bullets = self._maybe_extract_amazon_llm_bullets(
+                project, chapter_titles=chapter_titles
+            )
+            amazon_html_snippet = build_amazon_description_html(
+                project, llm_bullets=llm_bullets
+            )
             amazon_html_preview = _amazon_html_preview_payload(amazon_html_snippet)
             readability_highlight = _readability_highlight_payload(readability_json)
             self.writer.write_text(
