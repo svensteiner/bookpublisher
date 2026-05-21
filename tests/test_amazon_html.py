@@ -9,10 +9,16 @@ from modules.amazon_html import (
     BULLET_MAX_CHARS,
     HEADLINE_MAX_CHARS,
     LEAD_MAX_CHARS,
+    LLM_BULLETS_MAX_CHAPTER_TITLES,
+    LLM_BULLETS_MIN_CHARS,
+    LLM_BULLETS_SYSTEM_PROMPT,
     MAX_BULLETS,
     MIN_BULLETS,
     AmazonDescriptionHtml,
+    _parse_llm_bullets_payload,
     build_amazon_description_html,
+    build_llm_bullets_user_prompt,
+    extract_amazon_bullets_via_llm,
     render_amazon_description_report_markdown,
 )
 from modules.discovery import BookProject
@@ -146,3 +152,147 @@ def test_render_report_markdown_contains_html_block_and_components():
 def test_char_count_matches_html_length():
     snippet = build_amazon_description_html(_project())
     assert snippet.char_count == len(snippet.html)
+
+
+# --- LLM-Pass tests --------------------------------------------------------
+
+
+_GOOD_LLM_BULLETS = [
+    "Drei Methoden mit echten Zahlen aus 12 Projekten — sofort einsetzbar",
+    "Entscheidungsregeln statt Floskeln: was bei knapper Liquiditaet wirklich zaehlt",
+    "Checklisten fuer den Monatsabschluss, die CFOs in 30 Minuten durchziehen",
+    "Praxisbeispiele aus dem Mittelstand mit dokumentierten Ergebnissen",
+    "Ehrliche Risiken und Stolperfallen statt Erfolgs-Storytelling",
+]
+
+
+def test_build_uses_llm_bullets_when_provided():
+    snippet = build_amazon_description_html(_project(), llm_bullets=_GOOD_LLM_BULLETS)
+    assert any("Liquiditaet" in bullet for bullet in snippet.bullets)
+    assert all(len(bullet) <= BULLET_MAX_CHARS for bullet in snippet.bullets)
+    assert MIN_BULLETS <= len(snippet.bullets) <= MAX_BULLETS
+
+
+def test_build_falls_back_to_template_when_llm_bullets_too_few():
+    snippet = build_amazon_description_html(
+        _project(description="Praktisches Sachbuch."),
+        llm_bullets=["Nur ein einzelner Bullet"],
+    )
+    # The template path always returns >= MIN_BULLETS — the LLM fallback
+    # must not leave the description with one solitary bullet.
+    assert len(snippet.bullets) >= MIN_BULLETS
+    assert not any("Nur ein einzelner Bullet" == b for b in snippet.bullets)
+
+
+def test_build_handles_none_llm_bullets_as_default_path():
+    default_snippet = build_amazon_description_html(_project())
+    explicit_none = build_amazon_description_html(_project(), llm_bullets=None)
+    assert default_snippet.bullets == explicit_none.bullets
+
+
+def test_build_clips_overlong_llm_bullets():
+    long_bullet = "Konkrete Schritt-fuer-Schritt-Anleitung " * 10
+    bullets = [long_bullet] + _GOOD_LLM_BULLETS[:4]
+    snippet = build_amazon_description_html(_project(), llm_bullets=bullets)
+    for bullet in snippet.bullets:
+        assert len(bullet) <= BULLET_MAX_CHARS
+
+
+def test_build_dedupes_repeated_llm_bullets():
+    duplicate_bullet = "Drei Methoden mit echten Zahlen aus 12 Projekten heute"
+    bullets = [duplicate_bullet] * 6
+    snippet = build_amazon_description_html(_project(), llm_bullets=bullets)
+    lowered = [b.lower() for b in snippet.bullets]
+    # Dedup collapses to 1 → fewer than MIN_BULLETS → falls back to template.
+    assert len(set(lowered)) == len(lowered)
+    assert len(snippet.bullets) >= MIN_BULLETS
+
+
+def test_build_drops_too_short_llm_bullets():
+    bullets = ["Toll", "Bingo", "Praxis"] + _GOOD_LLM_BULLETS
+    snippet = build_amazon_description_html(_project(), llm_bullets=bullets)
+    for bullet in snippet.bullets:
+        assert len(bullet) >= LLM_BULLETS_MIN_CHARS
+
+
+def test_build_drops_non_string_llm_bullet_entries():
+    bullets: list = list(_GOOD_LLM_BULLETS) + [None, 42, {"x": 1}]
+    snippet = build_amazon_description_html(_project(), llm_bullets=bullets)
+    assert MIN_BULLETS <= len(snippet.bullets) <= MAX_BULLETS
+    assert all(isinstance(b, str) for b in snippet.bullets)
+
+
+def test_build_llm_bullets_user_prompt_includes_all_metadata():
+    project = _project()
+    prompt = build_llm_bullets_user_prompt(
+        project, chapter_titles=["Einstieg", "Methode", "Praxis"]
+    )
+    assert project.title in prompt
+    assert project.subtitle in prompt
+    assert "Einstieg" in prompt and "Methode" in prompt and "Praxis" in prompt
+
+
+def test_build_llm_bullets_user_prompt_caps_chapter_titles():
+    project = _project()
+    chapters = [f"Kapitel {i}" for i in range(100)]
+    prompt = build_llm_bullets_user_prompt(project, chapter_titles=chapters)
+    assert f"Kapitel {LLM_BULLETS_MAX_CHAPTER_TITLES - 1}" in prompt
+    assert f"Kapitel {LLM_BULLETS_MAX_CHAPTER_TITLES}" not in prompt
+
+
+def test_build_llm_bullets_user_prompt_handles_missing_metadata():
+    project = BookProject(project_id="bare", root=Path("."))
+    prompt = build_llm_bullets_user_prompt(project, chapter_titles=[])
+    # No crash, sensible placeholders so the LLM still gets a valid prompt.
+    assert "kein Titel" in prompt
+    assert "keine Beschreibung" in prompt
+    assert "keine Kapitel-Titel" in prompt
+
+
+def test_parse_llm_bullets_payload_extracts_string_array():
+    payload = {"bullets": _GOOD_LLM_BULLETS}
+    parsed = _parse_llm_bullets_payload(payload)
+    assert parsed == _GOOD_LLM_BULLETS
+
+
+def test_parse_llm_bullets_payload_ignores_non_string_items():
+    payload = {"bullets": ["valid", 42, None, "  ", "second"]}
+    parsed = _parse_llm_bullets_payload(payload)
+    assert parsed == ["valid", "second"]
+
+
+def test_parse_llm_bullets_payload_returns_empty_for_wrong_shape():
+    assert _parse_llm_bullets_payload({"foo": "bar"}) == []
+    assert _parse_llm_bullets_payload({"bullets": "not a list"}) == []
+    assert _parse_llm_bullets_payload("not a dict") == []
+    assert _parse_llm_bullets_payload(None) == []
+
+
+def test_extract_amazon_bullets_via_llm_returns_parsed_bullets():
+    captured: dict = {}
+
+    def fake_completer(system: str, user: str) -> dict:
+        captured["system"] = system
+        captured["user"] = user
+        return {"bullets": _GOOD_LLM_BULLETS}
+
+    bullets = extract_amazon_bullets_via_llm(_project(), ["Kap 1", "Kap 2"], fake_completer)
+    assert bullets == _GOOD_LLM_BULLETS
+    assert captured["system"] == LLM_BULLETS_SYSTEM_PROMPT
+    assert "Kap 1" in captured["user"]
+
+
+def test_extract_amazon_bullets_via_llm_swallows_exceptions():
+    def failing_completer(system: str, user: str) -> dict:
+        raise RuntimeError("boom")
+
+    bullets = extract_amazon_bullets_via_llm(_project(), ["Kap 1"], failing_completer)
+    assert bullets == []
+
+
+def test_extract_amazon_bullets_via_llm_returns_empty_on_invalid_payload():
+    def bad_completer(system: str, user: str) -> dict:
+        return {"bullets": "not a list"}
+
+    bullets = extract_amazon_bullets_via_llm(_project(), ["Kap 1"], bad_completer)
+    assert bullets == []
