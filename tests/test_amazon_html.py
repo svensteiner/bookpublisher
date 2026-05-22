@@ -9,17 +9,21 @@ from modules.amazon_html import (
     BULLET_MAX_CHARS,
     HEADLINE_MAX_CHARS,
     LEAD_MAX_CHARS,
+    LLM_BULLETS_HYPE_TOKENS,
     LLM_BULLETS_MAX_CHAPTER_TITLES,
     LLM_BULLETS_MIN_CHARS,
+    LLM_BULLETS_MIN_NUMBER_HITS,
     LLM_BULLETS_SYSTEM_PROMPT,
     MAX_BULLETS,
     MIN_BULLETS,
     AmazonDescriptionHtml,
+    BulletQualityResult,
     _parse_llm_bullets_payload,
     build_amazon_description_html,
     build_llm_bullets_user_prompt,
     extract_amazon_bullets_via_llm,
     render_amazon_description_report_markdown,
+    validate_llm_bullets,
 )
 from modules.discovery import BookProject
 
@@ -220,6 +224,188 @@ def test_build_drops_non_string_llm_bullet_entries():
     snippet = build_amazon_description_html(_project(), llm_bullets=bullets)
     assert MIN_BULLETS <= len(snippet.bullets) <= MAX_BULLETS
     assert all(isinstance(b, str) for b in snippet.bullets)
+
+
+# --- Bullet-Quality-Check tests -------------------------------------------
+
+
+def test_validate_accepts_good_bullets():
+    result = validate_llm_bullets(_GOOD_LLM_BULLETS)
+    assert isinstance(result, BulletQualityResult)
+    assert result.passed is True
+    assert len(result.accepted) == len(_GOOD_LLM_BULLETS)
+    assert result.rejected == ()
+    assert result.violations == ()
+
+
+def test_validate_rejects_exclamation_marks():
+    bullets = [
+        "Wahnsinn! Mit diesem Buch wirst du sofort erfolgreich",
+        "Drei Methoden mit echten Zahlen aus 12 Projekten — sofort einsetzbar",
+        "Checklisten fuer den Monatsabschluss, die CFOs in 30 Minuten durchziehen",
+        "Praxisbeispiele aus dem Mittelstand mit dokumentierten Ergebnissen",
+    ]
+    result = validate_llm_bullets(bullets)
+    rejected_texts = [text for text, _reason in result.rejected]
+    assert any(text.startswith("Wahnsinn!") for text in rejected_texts)
+    assert any("contains_exclamation" in reason for _t, reason in result.rejected)
+
+
+def test_validate_rejects_hype_tokens():
+    bullets = [
+        "Das ultimative Werk fuer alle die endlich Erfolg wollen ohne Umweg",
+        "Drei Methoden mit echten Zahlen aus 12 Projekten — sofort einsetzbar",
+        "Checklisten fuer den Monatsabschluss, die CFOs in 30 Minuten durchziehen",
+        "Praxisbeispiele aus dem Mittelstand mit dokumentierten Ergebnissen",
+    ]
+    result = validate_llm_bullets(bullets)
+    rejection_reasons = [reason for _text, reason in result.rejected]
+    assert any(reason.startswith("contains_hype:") for reason in rejection_reasons)
+    assert any("ultimativ" in reason for reason in rejection_reasons)
+
+
+def test_validate_flags_duplicate_start_words():
+    bullets = [
+        "Drei Methoden mit echten Zahlen aus 12 Projekten — sofort einsetzbar",
+        "Drei Schritte fuer den naechsten Monat, alle aus Kapitel zwei abgeleitet",
+        "Checklisten fuer den Monatsabschluss, die CFOs in 30 Minuten durchziehen",
+        "Praxisbeispiele aus dem Mittelstand mit dokumentierten Ergebnissen",
+    ]
+    result = validate_llm_bullets(bullets)
+    assert "duplicate_start_word" in result.violations
+    assert result.passed is False
+
+
+def test_validate_flags_missing_number():
+    bullets = [
+        "Konkrete Methoden mit echten Beispielen — sofort einsetzbar im Alltag",
+        "Entscheidungsregeln statt Floskeln fuer die naechste Krise",
+        "Checklisten fuer den Monatsabschluss, die CFOs durchziehen koennen",
+        "Praxisbeispiele aus dem Mittelstand mit dokumentierten Ergebnissen",
+    ]
+    result = validate_llm_bullets(bullets)
+    assert "missing_number" in result.violations
+    assert result.passed is False
+
+
+def test_validate_passes_with_single_number_bullet():
+    bullets = [
+        "Konkrete Methoden mit echten Beispielen — sofort einsetzbar im Alltag",
+        "Entscheidungsregeln statt Floskeln fuer die naechste Krise",
+        "Checklisten fuer den Monatsabschluss, die CFOs in 30 Minuten durchziehen",
+        "Praxisbeispiele aus dem Mittelstand mit dokumentierten Ergebnissen",
+    ]
+    result = validate_llm_bullets(bullets)
+    assert result.passed is True
+    assert "missing_number" not in result.violations
+
+
+def test_validate_first_word_ignores_trailing_punctuation():
+    bullets = [
+        "Drei, klare Methoden mit Zahlen aus 12 echten Projekten",
+        "Drei klare Schritte fuer den naechsten Monat aus dem Buch",
+        "Checklisten fuer den Monatsabschluss, die CFOs in 30 Minuten durchziehen",
+        "Praxisbeispiele aus dem Mittelstand mit dokumentierten Ergebnissen",
+    ]
+    result = validate_llm_bullets(bullets)
+    assert "duplicate_start_word" in result.violations
+
+
+def test_validate_empty_bullets_returns_all_rejected():
+    result = validate_llm_bullets([])
+    assert result.passed is False
+    assert "all_rejected" in result.violations
+    assert result.accepted == ()
+
+
+def test_validate_below_min_bullets_does_not_pass():
+    bullets = [
+        "Drei Methoden mit echten Zahlen aus 12 Projekten — sofort einsetzbar",
+        "Entscheidungsregeln statt Floskeln fuer die naechste Krise",
+    ]
+    result = validate_llm_bullets(bullets)
+    # Per-bullet filters all pass and there's no aggregate violation, but
+    # fewer than MIN_BULLETS bullets is not a "pass" — the caller relies on
+    # this to fall back to the template path.
+    assert result.passed is False
+    assert result.violations == ()
+    assert len(result.accepted) < MIN_BULLETS
+
+
+def test_validate_returns_frozen_dataclass():
+    result = validate_llm_bullets(_GOOD_LLM_BULLETS)
+    try:
+        result.passed = False  # type: ignore[misc]
+    except Exception as exc:
+        assert "frozen" in str(exc).lower() or "can't set" in str(exc).lower() or "cannot assign" in str(exc).lower()
+    else:
+        raise AssertionError("BulletQualityResult must be frozen — assignment should raise")
+
+
+def test_validate_handles_non_string_entries():
+    bullets: list = list(_GOOD_LLM_BULLETS) + [None, 42]
+    result = validate_llm_bullets(bullets)
+    rejected_reasons = [reason for _text, reason in result.rejected]
+    assert rejected_reasons.count("non_string") == 2
+
+
+def test_build_falls_back_to_template_when_quality_fails_hype():
+    """LLM bullets containing hype tokens must NOT reach the HTML — even
+    when there are enough of them to clear the MIN_BULLETS gate."""
+    hype_bullets = [
+        "Ultimative Methoden mit echten Zahlen aus 12 Projekten — Bestseller-Tipps",
+        "Garantierter Erfolg in 30 Minuten pro Tag — unglaublich einfach",
+        "Perfekter Einstieg fuer alle die endlich erfolgreich sein wollen",
+        "Das geheime Wissen der besten CFOs aus 50 Projekten gebuendelt",
+        "Revolutionaere Checklisten die jeder Operator sofort anwenden kann",
+    ]
+    snippet = build_amazon_description_html(_project(), llm_bullets=hype_bullets)
+    joined = " ".join(snippet.bullets).lower()
+    for token in ("ultimativ", "garantier", "perfekt", "geheim", "bestseller"):
+        assert token not in joined, f"hype token '{token}' leaked into HTML bullets"
+
+
+def test_build_falls_back_to_template_when_quality_fails_missing_number():
+    bullets = [
+        "Konkrete Methoden mit echten Beispielen — sofort einsetzbar im Alltag",
+        "Entscheidungsregeln statt Floskeln fuer die naechste schwere Krise",
+        "Checklisten fuer den Monatsabschluss, die CFOs durchziehen koennen",
+        "Praxisbeispiele aus dem Mittelstand mit dokumentierten Ergebnissen",
+        "Ehrliche Risiken und Stolperfallen statt Erfolgs-Storytelling-Pose",
+    ]
+    snippet = build_amazon_description_html(_project(), llm_bullets=bullets)
+    # The supplied bullets carry no digits → quality check fails → template
+    # path runs. The template fallback uses a different sentence shape so
+    # at least one supplied bullet must NOT appear verbatim.
+    supplied_set = {b for b in bullets}
+    assert not supplied_set.issubset(set(snippet.bullets))
+
+
+def test_build_falls_back_to_template_when_quality_fails_duplicate_start():
+    bullets = [
+        "Drei Methoden mit echten Zahlen aus 12 Projekten — sofort einsetzbar",
+        "Drei Schritte fuer den naechsten Monat, alle aus Kapitel zwei abgeleitet",
+        "Drei Checklisten fuer den Monatsabschluss, die CFOs durchziehen koennen",
+        "Drei Praxisbeispiele aus dem Mittelstand mit dokumentierten Ergebnissen",
+    ]
+    snippet = build_amazon_description_html(_project(), llm_bullets=bullets)
+    # All bullets start with "Drei" → quality check fails → template path
+    # runs. The template never produces 4 bullets that all start with the
+    # same word.
+    first_words = [b.split()[0].lower().rstrip(",.:;") for b in snippet.bullets]
+    assert len(set(first_words)) > 1
+
+
+def test_hype_token_constants_are_normalized():
+    """Drift-Schutz: each hype token is lowercase + non-empty."""
+    assert LLM_BULLETS_HYPE_TOKENS, "hype token list must not be empty"
+    for token in LLM_BULLETS_HYPE_TOKENS:
+        assert token == token.lower(), f"token '{token}' must be lowercased"
+        assert token.strip() == token, f"token '{token}' must not be whitespace-padded"
+
+
+def test_min_number_hits_constant_is_positive():
+    assert LLM_BULLETS_MIN_NUMBER_HITS >= 1
 
 
 def test_build_llm_bullets_user_prompt_includes_all_metadata():

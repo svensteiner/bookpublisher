@@ -49,6 +49,43 @@ LLM_BULLETS_MAX_CHAPTER_TITLES: int = 20
 # clipping/dedup path. Avoids one-word bullets sneaking into the HTML.
 LLM_BULLETS_MIN_CHARS: int = 16
 
+# Quality-check thresholds for LLM-generated bullets. If the LLM output
+# violates any of these rules, the caller falls back to the deterministic
+# template path so the Amazon listing never ships hype-y, repetitive or
+# proof-free bullets that the LLM hallucinated.
+LLM_BULLETS_MIN_NUMBER_HITS: int = 1
+# Tokens that signal Marketing-Hype — KDP-Sachbuch-Bestseller verzichten
+# bewusst auf diese Wörter. Matched case-insensitively on word boundaries
+# (so "fantastische" matches "fantastisch" only via the lemma prefix).
+LLM_BULLETS_HYPE_TOKENS: tuple[str, ...] = (
+    "ultimativ",
+    "unglaublich",
+    "perfekt",
+    "garantiert",
+    "revolutionaer",
+    "revolutionär",
+    "weltbeste",
+    "weltklasse",
+    "einzigartig",
+    "exklusiv",
+    "sensationell",
+    "fantastisch",
+    "wunderbar",
+    "magisch",
+    "geheim",
+    "bestseller",
+    "phaenomenal",
+    "phänomenal",
+    "atemberaubend",
+    "lebensveraendernd",
+    "lebensverändernd",
+    "must-have",
+    "must have",
+    "no-brainer",
+    "game-changer",
+    "gamechanger",
+)
+
 _BULLET_MARKERS: tuple[str, ...] = ("- ", "* ", "• ", "‣ ", "– ", "— ")
 _SECTION_HEADINGS: dict[str, str] = {
     "headline": "Versprechen",
@@ -212,6 +249,94 @@ def _normalize_bullet_candidates(
     return normalized
 
 
+# Pre-compile the hype regex once. We anchor each token at a word boundary
+# so "geheim" matches "geheime" / "geheim-tipp" but not embedded substrings
+# inside unrelated words. Sorted by length descending so the longer phrase
+# "must have" matches before "must-have".
+_LLM_BULLETS_HYPE_RE = re.compile(
+    r"\b(?:" + "|".join(
+        re.escape(token) for token in sorted(LLM_BULLETS_HYPE_TOKENS, key=len, reverse=True)
+    ) + r")",
+    re.IGNORECASE,
+)
+_LLM_BULLETS_DIGIT_RE = re.compile(r"\d")
+# First word of a bullet — strip surrounding punctuation, keep only letters
+# so "Drei" and "Drei," collapse to the same start-word key.
+_LLM_BULLETS_FIRST_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
+
+
+@dataclass(frozen=True)
+class BulletQualityResult:
+    """Outcome of the LLM-bullet sanity check.
+
+    ``accepted`` carries the bullets that passed the per-bullet filters
+    (no hype, no exclamation). ``rejected`` carries `(bullet, reason)`
+    pairs for traceability. ``violations`` lists aggregate-level issues
+    (duplicate first-word, no number in any bullet). ``passed`` is the
+    single bit the caller uses to decide: True → use ``accepted``, False
+    → fall back to the deterministic template path.
+    """
+
+    accepted: tuple[str, ...]
+    rejected: tuple[tuple[str, str], ...]
+    violations: tuple[str, ...]
+    passed: bool
+
+
+def _first_word_key(bullet: str) -> str:
+    match = _LLM_BULLETS_FIRST_WORD_RE.search(bullet)
+    return match.group(0).lower() if match else ""
+
+
+def validate_llm_bullets(bullets: Sequence[str]) -> BulletQualityResult:
+    """Run anti-hype + numerical-proof + duplicate-start checks.
+
+    Pure function. Returns a ``BulletQualityResult`` describing which
+    bullets survived the per-bullet filters and which aggregate-level
+    rules tripped. The caller (``_select_bullets``) treats ``passed=False``
+    as a fall-through signal to the template path so the Amazon listing
+    never ships a hallucinated, hype-heavy or proof-free bullet list.
+    """
+
+    accepted: list[str] = []
+    rejected: list[tuple[str, str]] = []
+    for raw in bullets:
+        if not isinstance(raw, str):
+            rejected.append((str(raw), "non_string"))
+            continue
+        bullet = raw.strip()
+        if not bullet:
+            continue
+        if "!" in bullet:
+            rejected.append((bullet, "contains_exclamation"))
+            continue
+        hype_match = _LLM_BULLETS_HYPE_RE.search(bullet)
+        if hype_match is not None:
+            rejected.append((bullet, f"contains_hype:{hype_match.group(0).lower()}"))
+            continue
+        accepted.append(bullet)
+
+    violations: list[str] = []
+    if accepted:
+        digit_hits = sum(1 for bullet in accepted if _LLM_BULLETS_DIGIT_RE.search(bullet))
+        if digit_hits < LLM_BULLETS_MIN_NUMBER_HITS:
+            violations.append("missing_number")
+        first_words = [_first_word_key(bullet) for bullet in accepted]
+        non_empty_starts = [word for word in first_words if word]
+        if non_empty_starts and len(set(non_empty_starts)) < len(non_empty_starts):
+            violations.append("duplicate_start_word")
+    else:
+        violations.append("all_rejected")
+
+    passed = not violations and len(accepted) >= MIN_BULLETS
+    return BulletQualityResult(
+        accepted=tuple(accepted),
+        rejected=tuple(rejected),
+        violations=tuple(violations),
+        passed=passed,
+    )
+
+
 def _select_bullets(
     project: BookProject,
     subject: str,
@@ -231,7 +356,9 @@ def _select_bullets(
     if llm_bullets:
         llm_clean = _normalize_bullet_candidates(llm_bullets)
         if len(llm_clean) >= MIN_BULLETS:
-            return llm_clean[:MAX_BULLETS]
+            quality = validate_llm_bullets(llm_clean)
+            if quality.passed:
+                return list(quality.accepted)[:MAX_BULLETS]
     existing = _extract_existing_bullets(project.amazon_description or "")
     if len(existing) >= MIN_BULLETS:
         return existing[:MAX_BULLETS]
