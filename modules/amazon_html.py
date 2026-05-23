@@ -40,6 +40,19 @@ MIN_BULLETS: int = 4
 MAX_BULLETS: int = 6
 DEFAULT_BULLET_COUNT: int = 5
 
+# Provenance labels for the bullet selection. Downstream tools (release
+# packager, CI checks, beginner_summary highlight) read ``bullets_source``
+# from amazon_description.json to decide which path produced the bullets
+# without having to parse the HTML.
+BULLETS_SOURCE_LLM: str = "llm"
+BULLETS_SOURCE_EXISTING: str = "existing"
+BULLETS_SOURCE_TEMPLATE: str = "template"
+BULLETS_SOURCES: tuple[str, ...] = (
+    BULLETS_SOURCE_LLM,
+    BULLETS_SOURCE_EXISTING,
+    BULLETS_SOURCE_TEMPLATE,
+)
+
 # Maximum number of chapter titles to forward to the LLM bullet extractor.
 # Keeping this small keeps the prompt cheap and forces the LLM to pick the
 # strongest selling points instead of mirroring the table of contents.
@@ -109,6 +122,7 @@ class AmazonDescriptionHtml:
     char_count: int
     keyword_score: int
     anchors: tuple[str, ...] = field(default_factory=tuple)
+    bullets_source: str = BULLETS_SOURCE_TEMPLATE
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -121,6 +135,7 @@ class AmazonDescriptionHtml:
             "char_count": self.char_count,
             "keyword_score": self.keyword_score,
             "anchors": list(self.anchors),
+            "bullets_source": self.bullets_source,
         }
 
 
@@ -343,14 +358,21 @@ def _select_bullets(
     audience: str,
     *,
     llm_bullets: Sequence[str] | None = None,
-) -> list[str]:
-    """Pick the final bullet list, preferring LLM bullets when provided.
+) -> tuple[list[str], str]:
+    """Pick the final bullet list and report its provenance.
 
-    When ``llm_bullets`` carries at least ``MIN_BULLETS`` usable items, the
-    LLM output replaces the template entirely so the HTML reflects the
-    book-specific selling points. When the LLM output is shorter than
-    ``MIN_BULLETS``, we fall back to the deterministic template so the
-    Amazon page never ships a half-empty bullet list.
+    Returns ``(bullets, source)`` where ``source`` is one of
+    ``BULLETS_SOURCE_LLM``, ``BULLETS_SOURCE_EXISTING`` or
+    ``BULLETS_SOURCE_TEMPLATE``. The source label lets downstream tools
+    (release packager, CI, beginner_summary) detect the bullet origin
+    without re-parsing the HTML.
+
+    When ``llm_bullets`` carries at least ``MIN_BULLETS`` usable items
+    AND passes the quality check, the LLM output wins. When the LLM
+    output is too short or fails the quality check, we fall back to the
+    existing description's bullet lines if rich enough, then to the
+    deterministic anti-hype template so the Amazon page never ships a
+    half-empty bullet list.
     """
 
     if llm_bullets:
@@ -358,10 +380,10 @@ def _select_bullets(
         if len(llm_clean) >= MIN_BULLETS:
             quality = validate_llm_bullets(llm_clean)
             if quality.passed:
-                return list(quality.accepted)[:MAX_BULLETS]
+                return list(quality.accepted)[:MAX_BULLETS], BULLETS_SOURCE_LLM
     existing = _extract_existing_bullets(project.amazon_description or "")
     if len(existing) >= MIN_BULLETS:
-        return existing[:MAX_BULLETS]
+        return existing[:MAX_BULLETS], BULLETS_SOURCE_EXISTING
     bullets = list(existing)
     seen = {item.lower() for item in bullets}
     for candidate in _fallback_bullets(subject, audience):
@@ -372,7 +394,7 @@ def _select_bullets(
         seen.add(clipped.lower())
         if len(bullets) >= DEFAULT_BULLET_COUNT:
             break
-    return bullets[:MAX_BULLETS]
+    return bullets[:MAX_BULLETS], BULLETS_SOURCE_TEMPLATE
 
 
 def _build_audience(audience: str) -> str:
@@ -424,7 +446,9 @@ def build_amazon_description_html(
 
     headline = _build_headline(project, subject, audience)
     lead = _build_lead(project, subject, audience)
-    bullets = _select_bullets(project, subject, audience, llm_bullets=llm_bullets)
+    bullets, bullets_source = _select_bullets(
+        project, subject, audience, llm_bullets=llm_bullets
+    )
     audience_text = _build_audience(audience)
     cta = _build_cta()
 
@@ -440,6 +464,7 @@ def build_amazon_description_html(
         char_count=len(html),
         keyword_score=score_keywords(scored_blob, anchors),
         anchors=tuple(anchors),
+        bullets_source=bullets_source,
     )
 
 

@@ -7,6 +7,10 @@ from pathlib import Path
 
 from modules.amazon_html import (
     BULLET_MAX_CHARS,
+    BULLETS_SOURCE_EXISTING,
+    BULLETS_SOURCE_LLM,
+    BULLETS_SOURCE_TEMPLATE,
+    BULLETS_SOURCES,
     HEADLINE_MAX_CHARS,
     LEAD_MAX_CHARS,
     LLM_BULLETS_HYPE_TOKENS,
@@ -482,3 +486,104 @@ def test_extract_amazon_bullets_via_llm_returns_empty_on_invalid_payload():
 
     bullets = extract_amazon_bullets_via_llm(_project(), ["Kap 1"], bad_completer)
     assert bullets == []
+
+
+# --- bullets_source provenance tests --------------------------------------
+
+
+def test_bullets_source_constants_are_distinct_and_listed():
+    """Drift-Schutz: drei kanonische Sources, jede in BULLETS_SOURCES."""
+
+    assert BULLETS_SOURCE_LLM == "llm"
+    assert BULLETS_SOURCE_EXISTING == "existing"
+    assert BULLETS_SOURCE_TEMPLATE == "template"
+    assert set(BULLETS_SOURCES) == {
+        BULLETS_SOURCE_LLM,
+        BULLETS_SOURCE_EXISTING,
+        BULLETS_SOURCE_TEMPLATE,
+    }
+    assert len(BULLETS_SOURCES) == len(set(BULLETS_SOURCES))
+
+
+def test_bullets_source_defaults_to_template_for_thin_description():
+    """Beschreibung ohne Bullet-Marker und ohne LLM-Pass → Template-Pfad."""
+
+    snippet = build_amazon_description_html(
+        _project(description="Praktisches Sachbuch ohne Listen-Aufzaehlung.")
+    )
+
+    assert snippet.bullets_source == BULLETS_SOURCE_TEMPLATE
+
+
+def test_bullets_source_is_existing_when_description_carries_marker_bullets():
+    description = (
+        "Praktisches Sachbuch fuer Operatoren.\n\n"
+        "- Drei Methoden mit echten Zahlen aus 12 Projekten\n"
+        "- Entscheidungsregeln statt Berater-Floskeln fuer Liquiditaet\n"
+        "- Checklisten fuer den Monatsabschluss in 30 Minuten\n"
+        "- Praxisbeispiele aus dem Mittelstand mit Zahlen\n"
+        "- Ehrliche Risiken statt Erfolgs-Storytelling\n"
+    )
+    snippet = build_amazon_description_html(_project(description=description))
+
+    assert snippet.bullets_source == BULLETS_SOURCE_EXISTING
+    assert any("Drei Methoden" in bullet for bullet in snippet.bullets)
+
+
+def test_bullets_source_is_llm_when_llm_bullets_pass_quality():
+    snippet = build_amazon_description_html(_project(), llm_bullets=_GOOD_LLM_BULLETS)
+
+    assert snippet.bullets_source == BULLETS_SOURCE_LLM
+
+
+def test_bullets_source_falls_back_when_llm_bullets_too_few():
+    snippet = build_amazon_description_html(
+        _project(description="Praktisches Sachbuch."),
+        llm_bullets=["Nur ein einzelner Bullet"],
+    )
+
+    assert snippet.bullets_source == BULLETS_SOURCE_TEMPLATE
+
+
+def test_bullets_source_falls_back_when_llm_bullets_fail_quality():
+    """Hype-Tokens disqualifizieren den LLM-Pass — Existing-/Template-Pfad gewinnt."""
+
+    hype_bullets = [
+        "Ultimativ revolutionaere Methoden fuer dich",
+        "Garantiert geheime Tricks fuer den Bestseller-Erfolg",
+        "Phaenomenale Game-Changer aus der Beratungswelt",
+        "Magische Schritte zu unglaublichem Erfolg",
+        "Exklusive Insider-Tipps fuer perfekte Ergebnisse",
+    ]
+    snippet = build_amazon_description_html(
+        _project(description="Praktisches Sachbuch."), llm_bullets=hype_bullets
+    )
+
+    assert snippet.bullets_source != BULLETS_SOURCE_LLM
+    assert snippet.bullets_source in (BULLETS_SOURCE_EXISTING, BULLETS_SOURCE_TEMPLATE)
+
+
+def test_bullets_source_serialized_in_to_json():
+    snippet = build_amazon_description_html(_project(), llm_bullets=_GOOD_LLM_BULLETS)
+    payload = snippet.to_json()
+
+    assert payload["bullets_source"] == BULLETS_SOURCE_LLM
+    assert payload["bullets_source"] in BULLETS_SOURCES
+
+
+def test_amazon_description_html_default_bullets_source_is_template():
+    """Backwards-Compat: AmazonDescriptionHtml ohne expliziten Source defaultet auf template."""
+
+    snippet = AmazonDescriptionHtml(
+        headline="x",
+        lead="y",
+        bullets=("a", "b"),
+        audience="z",
+        cta="c",
+        html="<p>x</p>",
+        char_count=8,
+        keyword_score=0,
+    )
+
+    assert snippet.bullets_source == BULLETS_SOURCE_TEMPLATE
+    assert snippet.to_json()["bullets_source"] == BULLETS_SOURCE_TEMPLATE
