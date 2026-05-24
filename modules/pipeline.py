@@ -5,6 +5,8 @@ from pathlib import Path
 
 from modules.agent_core import AgentMemory, SkillRegistry
 from modules.amazon_html import (
+    BULLETS_SOURCES,
+    BULLETS_SOURCE_TEMPLATE,
     build_amazon_description_html,
     extract_amazon_bullets_via_llm,
     render_amazon_description_report_markdown,
@@ -397,12 +399,17 @@ def _amazon_html_preview_payload(amazon_html: Any) -> dict | None:
         return None
     char_count = int(getattr(amazon_html, "char_count", 0) or 0)
     keyword_score = int(getattr(amazon_html, "keyword_score", 0) or 0)
+    raw_source = str(getattr(amazon_html, "bullets_source", "") or "").strip()
+    bullets_source = (
+        raw_source if raw_source in BULLETS_SOURCES else BULLETS_SOURCE_TEMPLATE
+    )
     return {
         "headline": headline,
         "lead": lead,
         "bullets": tuple(bullets),
         "char_count": char_count,
         "keyword_score": keyword_score,
+        "bullets_source": bullets_source,
     }
 
 

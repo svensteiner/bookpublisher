@@ -1508,6 +1508,118 @@ def test_render_beginner_summary_amazon_html_preview_works_with_bullets_only():
     assert "punkt zwei" in summary
 
 
+def test_render_beginner_summary_amazon_html_preview_marks_llm_source():
+    """When bullets come from the LLM pass the marker line says so.
+
+    The author must be able to see at a glance whether the bullets shown
+    are template-generic or manuscript-specific — without opening the
+    JSON artifact.
+    """
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    preview = {
+        "headline": "Headline",
+        "lead": "Lead.",
+        "bullets": ("Punkt eins", "Punkt zwei"),
+        "char_count": 100,
+        "keyword_score": 30,
+        "bullets_source": "llm",
+    }
+
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, amazon_html_preview=preview
+    )
+
+    assert "Quelle:" in summary
+    assert "LLM-Pass" in summary
+    assert "manuskript-spezifisch" in summary
+
+
+def test_render_beginner_summary_amazon_html_preview_marks_existing_source():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    preview = {
+        "headline": "Headline",
+        "lead": "Lead.",
+        "bullets": ("Punkt eins", "Punkt zwei"),
+        "char_count": 100,
+        "keyword_score": 30,
+        "bullets_source": "existing",
+    }
+
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, amazon_html_preview=preview
+    )
+
+    assert "Quelle:" in summary
+    assert "bestehender Beschreibung" in summary
+    assert "LLM-Pass" not in summary
+
+
+def test_render_beginner_summary_amazon_html_preview_marks_template_source():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    preview = {
+        "headline": "Headline",
+        "lead": "Lead.",
+        "bullets": ("Punkt eins", "Punkt zwei"),
+        "char_count": 100,
+        "keyword_score": 30,
+        "bullets_source": "template",
+    }
+
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, amazon_html_preview=preview
+    )
+
+    assert "Quelle:" in summary
+    assert "Template" in summary
+    assert "kein LLM-Pass" in summary
+
+
+def test_render_beginner_summary_amazon_html_preview_omits_source_marker_when_unknown():
+    """An unknown source value renders the preview but no marker line."""
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    preview = {
+        "headline": "Headline",
+        "lead": "Lead.",
+        "bullets": ("Punkt eins",),
+        "char_count": 100,
+        "keyword_score": 30,
+        "bullets_source": "experimental",
+    }
+
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, amazon_html_preview=preview
+    )
+
+    assert "## Amazon-Beschreibung (Vorschau)" in summary
+    assert "Quelle:" not in summary
+
+
+def test_render_beginner_summary_amazon_html_preview_omits_source_marker_when_missing():
+    """No ``bullets_source`` key at all → no marker line.
+
+    Backwards-compat: legacy preview dicts (no source field) must keep
+    rendering exactly like before.
+    """
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    preview = {
+        "headline": "Headline",
+        "lead": "Lead.",
+        "bullets": ("Punkt eins",),
+        "char_count": 100,
+        "keyword_score": 30,
+    }
+
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, amazon_html_preview=preview
+    )
+
+    assert "## Amazon-Beschreibung (Vorschau)" in summary
+    assert "Quelle:" not in summary
+
+
 def test_render_beginner_summary_amazon_html_preview_omits_meta_when_zero():
     result = build_industrial_qa(_project(manuscript=None, cover=None))
     preview = {

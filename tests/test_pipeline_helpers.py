@@ -1693,6 +1693,70 @@ def test_amazon_html_preview_payload_bullets_are_tuple():
     assert isinstance(payload["bullets"], tuple)
 
 
+def test_amazon_html_preview_payload_defaults_bullets_source_to_template():
+    """A snippet without a ``bullets_source`` attribute defaults to template.
+
+    Preserves the existing on-disk contract: when ``AmazonDescriptionHtml``
+    is constructed without an explicit source (older fixtures, third-party
+    callers), the payload must still carry the dominant fallback label so
+    the beginner_summary marker line stays consistent.
+    """
+
+    snippet = _FakeAmazonHtml(headline="h", lead="l", bullets=("one",))
+
+    payload = _amazon_html_preview_payload(snippet)
+
+    assert payload is not None
+    assert payload["bullets_source"] == "template"
+
+
+def test_amazon_html_preview_payload_carries_llm_source():
+    snippet = _FakeAmazonHtml(headline="h", lead="l", bullets=("one",))
+    snippet.bullets_source = "llm"
+
+    payload = _amazon_html_preview_payload(snippet)
+
+    assert payload is not None
+    assert payload["bullets_source"] == "llm"
+
+
+def test_amazon_html_preview_payload_carries_existing_source():
+    snippet = _FakeAmazonHtml(headline="h", lead="l", bullets=("one",))
+    snippet.bullets_source = "existing"
+
+    payload = _amazon_html_preview_payload(snippet)
+
+    assert payload is not None
+    assert payload["bullets_source"] == "existing"
+
+
+def test_amazon_html_preview_payload_rejects_unknown_source():
+    """An unknown ``bullets_source`` label collapses to template.
+
+    A misconfigured caller (or a future drift) must not produce a marker
+    line referencing an unknown channel — silently fall back to the
+    canonical template label so the beginner_summary stays honest.
+    """
+
+    snippet = _FakeAmazonHtml(headline="h", lead="l", bullets=("one",))
+    snippet.bullets_source = "manual-override"
+
+    payload = _amazon_html_preview_payload(snippet)
+
+    assert payload is not None
+    assert payload["bullets_source"] == "template"
+
+
+def test_amazon_html_preview_payload_strips_whitespace_source():
+    snippet = _FakeAmazonHtml(headline="h", lead="l", bullets=("one",))
+    snippet.bullets_source = "  llm  "
+
+    payload = _amazon_html_preview_payload(snippet)
+
+    assert payload is not None
+    assert payload["bullets_source"] == "llm"
+
+
 # ─── _positioning_score ────────────────────────────────────────────────
 
 

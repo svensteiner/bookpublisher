@@ -7,9 +7,27 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from modules.amazon_html import (
+    BULLETS_SOURCE_EXISTING,
+    BULLETS_SOURCE_LLM,
+    BULLETS_SOURCE_TEMPLATE,
+)
 from modules.cover import analyze_cover
 from modules.discovery import BookProject
 from modules.readers import read_any_text, read_text_file
+
+
+BULLETS_SOURCE_LABELS: dict[str, str] = {
+    BULLETS_SOURCE_LLM: (
+        "Bullets aus LLM-Pass (manuskript-spezifisch generiert)"
+    ),
+    BULLETS_SOURCE_EXISTING: (
+        "Bullets aus bestehender Beschreibung übernommen"
+    ),
+    BULLETS_SOURCE_TEMPLATE: (
+        "Bullets aus Template-Bibliothek (kein LLM-Pass aktiv)"
+    ),
+}
 
 
 @dataclass
@@ -1060,6 +1078,12 @@ def _render_amazon_html_preview(
         ),
         "",
     ]
+    source_label = BULLETS_SOURCE_LABELS.get(
+        str(amazon_html_preview.get("bullets_source") or "").strip()
+    )
+    if source_label:
+        lines.append(f"_Quelle: {source_label}._")
+        lines.append("")
     if headline:
         lines.append(f"> **{headline}**")
     if lead:
