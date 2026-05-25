@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import statistics
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from modules.scoring import (
     SCORE_BADGE_FIX,
@@ -232,6 +232,60 @@ def extract_docx_chapters(path: Any) -> list[Chapter]:
         style = para.style.name if para.style else ""
         paragraphs.append({"text": text, "style": style})
     return split_paragraphs_into_chapters(paragraphs)
+
+
+# Default cap for the first-paragraph snippet shipped to the LLM
+# bullet-extractor prompt. 400 characters captures the opening claim
+# without bloating the prompt or leaking large portions of the manuscript.
+CHAPTER_INTRO_MAX_CHARS: int = 400
+
+
+def _first_paragraph(body: str) -> str:
+    """Return the first non-empty line from a chapter body, stripped."""
+
+    if not body:
+        return ""
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _clip_intro(text: str, max_chars: int) -> str:
+    """Hard-cap an intro to ``max_chars`` without splitting a UTF-8 codepoint.
+
+    The cap is character-based, ASCII ellipsis is appended when the
+    text was truncated so the LLM gets a clear signal the snippet ends
+    mid-thought. ``max_chars`` <= 0 returns an empty string.
+    """
+
+    if max_chars <= 0 or not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    head = text[:max_chars].rstrip()
+    return f"{head}…"
+
+
+def extract_chapter_intros(
+    chapters: Sequence[Chapter],
+    *,
+    max_chars: int = CHAPTER_INTRO_MAX_CHARS,
+) -> list[tuple[str, str]]:
+    """Build (title, intro) pairs for the LLM bullet prompt.
+
+    The intro is the first non-empty paragraph of each chapter body,
+    clipped to ``max_chars`` characters. Chapters without a usable body
+    are still returned with an empty intro so the caller can decide
+    whether to show only the title or skip the chapter entirely.
+    Pure function: never reads from disk, never mutates inputs.
+    """
+
+    return [
+        (chapter.title, _clip_intro(_first_paragraph(chapter.body), max_chars))
+        for chapter in chapters
+    ]
 
 
 def _marker_score(text: str, pattern: str, target_hits: int) -> int:

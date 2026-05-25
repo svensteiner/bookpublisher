@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from modules.chapters import (
+    CHAPTER_INTRO_MAX_CHARS,
     Chapter,
     ChapterBalanceOutlier,
     ChapterBalanceReport,
@@ -10,6 +11,7 @@ from modules.chapters import (
     ChapterScore,
     analyze_chapter_balance,
     build_chapter_report,
+    extract_chapter_intros,
     render_chapter_report_markdown,
     score_chapter,
     split_paragraphs_into_chapters,
@@ -637,3 +639,86 @@ def test_load_config_clamps_invalid_balance_values(tmp_path):
     assert loaded.balance_oversized_factor == 1.1
     assert loaded.balance_undersized_factor == 0.9
     assert loaded.balance_min_chapters == 2
+
+
+# --- chapter intro extraction (for LLM bullet prompt) ---------------------
+
+
+def _chapter_with_body(index: int, title: str, body: str) -> Chapter:
+    return Chapter(index=index, title=title, body=body, word_count=len(body.split()))
+
+
+def test_chapter_intro_max_chars_default_is_400():
+    """Pinning the default cap so prompt-size budgets stay stable."""
+
+    assert CHAPTER_INTRO_MAX_CHARS == 400
+
+
+def test_extract_chapter_intros_returns_first_paragraph_per_chapter():
+    chapters = [
+        _chapter_with_body(1, "Kapitel 1", "Erste Zeile mit Inhalt.\nZweite Zeile."),
+        _chapter_with_body(2, "Kapitel 2", "Eine Behauptung mit Beweis."),
+    ]
+    intros = extract_chapter_intros(chapters)
+    assert intros == [
+        ("Kapitel 1", "Erste Zeile mit Inhalt."),
+        ("Kapitel 2", "Eine Behauptung mit Beweis."),
+    ]
+
+
+def test_extract_chapter_intros_clips_long_intro_with_ellipsis():
+    long_intro = "Ein sehr langer Absatz. " * 50
+    chapters = [_chapter_with_body(1, "K", long_intro)]
+    intros = extract_chapter_intros(chapters, max_chars=80)
+    title, intro = intros[0]
+    assert title == "K"
+    assert intro.endswith("…")
+    # ellipsis adds one char; the cap covers the head only.
+    assert len(intro) <= 81
+
+
+def test_extract_chapter_intros_does_not_clip_short_intro():
+    chapters = [_chapter_with_body(1, "K", "Kurz und knapp.")]
+    intros = extract_chapter_intros(chapters, max_chars=400)
+    assert intros == [("K", "Kurz und knapp.")]
+    assert "…" not in intros[0][1]
+
+
+def test_extract_chapter_intros_empty_body_yields_empty_intro():
+    chapters = [
+        _chapter_with_body(1, "Kapitel 1", ""),
+        _chapter_with_body(2, "Kapitel 2", "   \n  \n"),
+        _chapter_with_body(3, "Kapitel 3", "Etwas Inhalt hier."),
+    ]
+    intros = extract_chapter_intros(chapters)
+    assert intros == [
+        ("Kapitel 1", ""),
+        ("Kapitel 2", ""),
+        ("Kapitel 3", "Etwas Inhalt hier."),
+    ]
+
+
+def test_extract_chapter_intros_skips_leading_whitespace_lines():
+    chapters = [
+        _chapter_with_body(1, "K", "\n\n  \nDer eigentliche Anfang.\nWeitere Zeile.")
+    ]
+    intros = extract_chapter_intros(chapters)
+    assert intros == [("K", "Der eigentliche Anfang.")]
+
+
+def test_extract_chapter_intros_does_not_mutate_chapters():
+    body = "Erste Zeile.\nZweite Zeile."
+    chapters = [_chapter_with_body(1, "K", body)]
+    extract_chapter_intros(chapters)
+    assert chapters[0].body == body
+    assert chapters[0].title == "K"
+
+
+def test_extract_chapter_intros_empty_input_returns_empty_list():
+    assert extract_chapter_intros([]) == []
+
+
+def test_extract_chapter_intros_max_chars_zero_yields_empty_intros():
+    chapters = [_chapter_with_body(1, "K", "Irgendwas.")]
+    intros = extract_chapter_intros(chapters, max_chars=0)
+    assert intros == [("K", "")]

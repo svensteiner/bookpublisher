@@ -14,6 +14,7 @@ from modules.amazon_html import (
     HEADLINE_MAX_CHARS,
     LEAD_MAX_CHARS,
     LLM_BULLETS_HYPE_TOKENS,
+    LLM_BULLETS_MAX_CHAPTER_INTROS,
     LLM_BULLETS_MAX_CHAPTER_TITLES,
     LLM_BULLETS_MIN_CHARS,
     LLM_BULLETS_MIN_NUMBER_HITS,
@@ -587,3 +588,103 @@ def test_amazon_description_html_default_bullets_source_is_template():
 
     assert snippet.bullets_source == BULLETS_SOURCE_TEMPLATE
     assert snippet.to_json()["bullets_source"] == BULLETS_SOURCE_TEMPLATE
+
+
+# --- chapter-intros in the LLM bullet prompt ------------------------------
+
+
+def test_llm_bullets_max_chapter_intros_positive():
+    assert LLM_BULLETS_MAX_CHAPTER_INTROS >= 1
+
+
+def test_build_llm_bullets_user_prompt_without_intros_omits_intro_block():
+    """No chapter_intros → no Kapitel-Eroeffnungen section in the prompt."""
+
+    prompt = build_llm_bullets_user_prompt(_project(), chapter_titles=["A", "B"])
+    assert "Kapitel-Eroeffnungen" not in prompt
+
+
+def test_build_llm_bullets_user_prompt_includes_chapter_intros_block():
+    intros = [
+        ("Kapitel 1", "Mein Cashflow brach 2019 ein. Die Buchhaltung hatte recht."),
+        ("Kapitel 2", "Drei Wochen ohne Umsatz lehrten mich die Liquiditaetsregel."),
+    ]
+    prompt = build_llm_bullets_user_prompt(
+        _project(), chapter_titles=["Kapitel 1", "Kapitel 2"], chapter_intros=intros
+    )
+    assert "Kapitel-Eroeffnungen" in prompt
+    assert "Mein Cashflow brach 2019 ein." in prompt
+    assert "Drei Wochen ohne Umsatz" in prompt
+
+
+def test_build_llm_bullets_user_prompt_skips_empty_intros():
+    """Whitespace-only or empty intros never leak into the prompt block."""
+
+    intros = [
+        ("Kapitel 1", ""),
+        ("Kapitel 2", "   "),
+        ("Kapitel 3", "Ein konkreter Satz."),
+    ]
+    prompt = build_llm_bullets_user_prompt(
+        _project(),
+        chapter_titles=["Kapitel 1", "Kapitel 2", "Kapitel 3"],
+        chapter_intros=intros,
+    )
+    assert "Kapitel-Eroeffnungen" in prompt
+    assert "Ein konkreter Satz." in prompt
+    # Ensure we did not emit a dangling "- Kapitel 1: " line.
+    assert "- Kapitel 1: \n" not in prompt
+    assert "- Kapitel 1:\n" not in prompt
+    assert "- Kapitel 2:" not in prompt
+
+
+def test_build_llm_bullets_user_prompt_no_intro_block_when_all_empty():
+    """All intros empty → fall back silently to title-only prompt."""
+
+    intros = [("Kapitel 1", ""), ("Kapitel 2", "   ")]
+    prompt = build_llm_bullets_user_prompt(
+        _project(), chapter_titles=["Kapitel 1"], chapter_intros=intros
+    )
+    assert "Kapitel-Eroeffnungen" not in prompt
+
+
+def test_build_llm_bullets_user_prompt_caps_chapter_intros():
+    intros = [(f"K{i}", f"Satz {i} mit Substanz.") for i in range(50)]
+    prompt = build_llm_bullets_user_prompt(
+        _project(),
+        chapter_titles=[f"K{i}" for i in range(50)],
+        chapter_intros=intros,
+    )
+    # Only the first LLM_BULLETS_MAX_CHAPTER_INTROS make it through.
+    last_kept = LLM_BULLETS_MAX_CHAPTER_INTROS - 1
+    assert f"Satz {last_kept} mit Substanz." in prompt
+    assert f"Satz {LLM_BULLETS_MAX_CHAPTER_INTROS} mit Substanz." not in prompt
+
+
+def test_extract_amazon_bullets_via_llm_forwards_chapter_intros():
+    captured: dict = {}
+
+    def fake_completer(system: str, user: str) -> dict:
+        captured["user"] = user
+        return {"bullets": _GOOD_LLM_BULLETS}
+
+    intros = [("Kapitel 1", "Konkrete Zahl: 12 Wochen.")]
+    bullets = extract_amazon_bullets_via_llm(
+        _project(),
+        ["Kapitel 1"],
+        fake_completer,
+        chapter_intros=intros,
+    )
+    assert bullets == _GOOD_LLM_BULLETS
+    assert "Kapitel-Eroeffnungen" in captured["user"]
+    assert "Konkrete Zahl: 12 Wochen." in captured["user"]
+
+
+def test_extract_amazon_bullets_via_llm_without_intros_backwards_compatible():
+    """Existing callers that don't pass chapter_intros still work."""
+
+    def fake_completer(system: str, user: str) -> dict:
+        return {"bullets": _GOOD_LLM_BULLETS}
+
+    bullets = extract_amazon_bullets_via_llm(_project(), ["Kap"], fake_completer)
+    assert bullets == _GOOD_LLM_BULLETS

@@ -12,7 +12,11 @@ from modules.amazon_html import (
     render_amazon_description_report_markdown,
 )
 from modules.artifacts import ArtifactWriter
-from modules.chapters import balance_thresholds_from_app
+from modules.chapters import (
+    balance_thresholds_from_app,
+    extract_chapter_intros,
+    extract_docx_chapters,
+)
 from modules.competitive_positioning import (
     PositioningReport,
     build_positioning_report,
@@ -956,6 +960,30 @@ class PublisherPipeline:
         if self.config.artifact_mirror_single_project and len(projects) == 1:
             self.writer.mirror_single_project_file(projects[0].project_id, filename)
 
+    def _collect_chapter_intros(
+        self, project: BookProject
+    ) -> list[tuple[str, str]]:
+        """Best-effort extraction of (title, first-paragraph) per chapter.
+
+        Reads the manuscript once and returns the clipped intros for the
+        LLM bullet-extractor prompt. Returns an empty list when no
+        manuscript is configured or extraction raises — the LLM prompt
+        falls back to the title-only block and the run continues.
+        """
+
+        if not project.manuscript:
+            return []
+        try:
+            chapters = extract_docx_chapters(project.manuscript)
+        except Exception as exc:
+            self.logger.log(
+                "amazon_html_llm_intros_failed",
+                project_id=project.project_id,
+                error=str(exc),
+            )
+            return []
+        return extract_chapter_intros(chapters)
+
     def _maybe_extract_amazon_llm_bullets(
         self, project: BookProject, *, chapter_titles: list[str]
     ) -> list[str] | None:
@@ -979,11 +1007,13 @@ class PublisherPipeline:
                 reason="missing_api_key",
             )
             return None
+        chapter_intros = self._collect_chapter_intros(project)
         try:
             bullets = extract_amazon_bullets_via_llm(
                 project,
                 chapter_titles,
                 self.llm.complete_json,
+                chapter_intros=chapter_intros or None,
             )
         except Exception as exc:
             self.logger.log(
@@ -996,6 +1026,7 @@ class PublisherPipeline:
             "amazon_html_llm_bullets_completed",
             project_id=project.project_id,
             bullet_count=len(bullets),
+            intro_count=sum(1 for _, intro in chapter_intros if intro),
         )
         return bullets or None
 
