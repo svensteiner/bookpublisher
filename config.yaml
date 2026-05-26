@@ -72,6 +72,14 @@ beginner_summary_weakest_sample_limit: 1
 readability_target_min: 50
 readability_target_max: 80
 
+# Optional LLM-Pass for the First-N%-Deep-Scan (Kindle-Sample). When
+# enabled AND ANTHROPIC_API_KEY is set, every risky section (REVIEW/FIX)
+# gets a concrete LLM-rewritten opening sentence in sample_scan.md. Off
+# by default because the heuristic fix lines are already actionable and
+# the LLM call only pays off once the deterministic gates are green.
+# Any LLM failure falls back silently to the heuristic path.
+sample_scan_llm_rewrites_enabled: false
+
 # Optional matplotlib-backed PNG render of the score history. Off by
 # default because matplotlib is not in the install set and would bloat
 # the Windows EXE. Enable with `score_history_graph_enabled: true` and

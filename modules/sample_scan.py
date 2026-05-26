@@ -22,8 +22,8 @@ an LLM API key and produces the same artefact on every QA round.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import Any, Iterable
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from modules.chapters import _is_heading
 from modules.discovery import BookProject
@@ -164,9 +164,14 @@ class SampleSectionScore:
     status: str
     risk: str
     fix: str
+    # Optional LLM-rewritten opening sentence for the section. Empty string
+    # when no LLM-Pass ran OR the section is already READY (no risk worth
+    # rewriting). Always one paste-ready sentence on German, never multiple
+    # lines or quoted markup. The original manuscript text is never mutated.
+    opening_rewrite: str = ""
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "index": self.index,
             "label": self.label,
             "word_count": self.word_count,
@@ -182,6 +187,9 @@ class SampleSectionScore:
             "risk": self.risk,
             "fix": self.fix,
         }
+        if self.opening_rewrite:
+            payload["opening_rewrite"] = self.opening_rewrite
+        return payload
 
 
 @dataclass(frozen=True)
@@ -630,5 +638,218 @@ def render_sample_scan_markdown(project: BookProject, report: SampleScanReport) 
         lines.append("")
         lines.append(f"- Score: **{sec.overall}/100** ({sec.risk})")
         lines.append(f"- Fix: {sec.fix}")
+        if sec.opening_rewrite:
+            lines.append(f"- Vorschlag Eroeffnungssatz: _{sec.opening_rewrite}_")
         lines.append("")
     return "\n".join(lines)
+
+
+# --- Optional LLM-Pass: opening-sentence rewrites for risky sections ------
+
+LLM_REWRITES_SYSTEM_PROMPT: str = (
+    "Du bist ein erfahrener Sachbuch-Lektor fuer den deutschen KDP-Markt. "
+    "Deine Aufgabe: fuer jeden uebergebenen Abschnitt aus der Kindle-Leseprobe "
+    "einen alternativen Eroeffnungssatz vorschlagen, der den Leser am Weiterlesen "
+    "haelt — eine konkrete Frage, eine ueberraschende Zahl oder eine Mini-Szene. "
+    "Pro Abschnitt genau EIN Satz auf Deutsch, max 160 Zeichen, ohne Hype, "
+    "ohne Ausrufezeichen, ohne Marketing-Floskeln. "
+    "Antworte ausschliesslich als JSON mit dem Schluessel 'rewrites' "
+    "(Array von Objekten {index: int, opening: str}). Kein zusaetzlicher Text."
+)
+
+# Hard caps so the LLM prompt stays cheap and bounded regardless of book size.
+LLM_REWRITES_MAX_SECTIONS: int = 6
+LLM_REWRITES_BODY_PREVIEW_CHARS: int = 360
+LLM_REWRITES_MAX_OPENING_CHARS: int = 200
+LLM_REWRITES_MIN_OPENING_CHARS: int = 12
+
+
+def _section_body_preview(body: str, *, max_chars: int) -> str:
+    """Clip a section body to a small preview window for the LLM prompt."""
+
+    cleaned = re.sub(r"\s+", " ", (body or "").strip())
+    if len(cleaned) <= max_chars:
+        return cleaned
+    cut = cleaned.rfind(" ", 0, max_chars)
+    if cut < int(max_chars * 0.6):
+        cut = max_chars
+    return cleaned[:cut].rstrip(" ,;:-") + "…"
+
+
+def _risky_sections_for_rewrite(
+    report: SampleScanReport, *, limit: int = LLM_REWRITES_MAX_SECTIONS
+) -> list[SampleSectionScore]:
+    """Pick the highest-risk sections worth rewriting.
+
+    Only sections whose status is REVIEW or FIX are eligible — READY
+    sections already convert, so a rewrite would be churn. The result is
+    sorted by overall score ascending (worst first) so the LLM budget hits
+    the most impactful sections first when the cap kicks in.
+    """
+
+    risky = [s for s in report.sections if s.status != "READY"]
+    risky.sort(key=lambda s: (s.overall, s.index))
+    capped = max(0, int(limit))
+    return risky[:capped]
+
+
+def build_sample_rewrites_user_prompt(
+    report: SampleScanReport,
+    section_bodies: Mapping[int, str],
+    *,
+    limit: int = LLM_REWRITES_MAX_SECTIONS,
+    preview_chars: int = LLM_REWRITES_BODY_PREVIEW_CHARS,
+) -> str:
+    """Render the user prompt for the LLM rewrite extractor.
+
+    Only risky sections are listed so the LLM does not waste tokens
+    rewriting already-strong openings. Each block carries the section
+    label, current scores, the weakest dimension (hook/promise/value/
+    readability) AND a clipped preview of the body so the LLM grounds
+    the rewrite in the actual prose. Empty when there are no risky
+    sections to rewrite — the caller short-circuits and never makes the
+    LLM call in that case.
+    """
+
+    candidates = _risky_sections_for_rewrite(report, limit=limit)
+    if not candidates:
+        return ""
+    blocks: list[str] = []
+    for sec in candidates:
+        body = section_bodies.get(sec.index, "")
+        preview = _section_body_preview(body, max_chars=preview_chars)
+        dims = {
+            "hook": sec.hook,
+            "promise": sec.promise,
+            "value": sec.value,
+            "readability": sec.readability,
+        }
+        weakest = min(dims, key=dims.get)
+        block_lines = [
+            f"Abschnitt {sec.index}: {sec.label}",
+            f"- Aktueller Score: {sec.overall}/100 ({sec.risk})",
+            f"- Schwaechste Dimension: {weakest}",
+            f"- Aktueller Fix-Hinweis: {sec.fix}",
+        ]
+        if preview:
+            block_lines.append(f"- Aktueller Text (gekuerzt): {preview}")
+        blocks.append("\n".join(block_lines))
+    body_block = "\n\n".join(blocks)
+    return (
+        "Hier sind die Abschnitte mit Abbruch-Risiko aus der Kindle-Leseprobe. "
+        "Liefere fuer jeden Abschnitt einen neuen Eroeffnungssatz im geforderten "
+        "JSON-Format. Verwende exakt die uebergebenen 'index'-Werte.\n\n"
+        f"{body_block}"
+    )
+
+
+def _parse_sample_rewrites_payload(payload: Any) -> dict[int, str]:
+    """Extract ``{index: opening}`` from the LLM JSON response.
+
+    Tolerant to shape drift: skips non-dict entries, non-int indices,
+    non-string openings, and openings that are too short / too long. The
+    returned mapping is keyed by section index so the caller can apply
+    rewrites without re-matching on label strings.
+    """
+
+    if not isinstance(payload, dict):
+        return {}
+    raw_entries = payload.get("rewrites")
+    if not isinstance(raw_entries, list):
+        return {}
+    out: dict[int, str] = {}
+    for entry in raw_entries:
+        if not isinstance(entry, dict):
+            continue
+        raw_index = entry.get("index")
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        raw_opening = entry.get("opening")
+        if not isinstance(raw_opening, str):
+            continue
+        opening = re.sub(r"\s+", " ", raw_opening).strip().strip('"“”«»')
+        if "!" in opening:
+            continue
+        if len(opening) < LLM_REWRITES_MIN_OPENING_CHARS:
+            continue
+        if len(opening) > LLM_REWRITES_MAX_OPENING_CHARS:
+            opening = opening[:LLM_REWRITES_MAX_OPENING_CHARS].rstrip(" ,;:-") + "…"
+        out[index] = opening
+    return out
+
+
+def extract_sample_rewrites_via_llm(
+    report: SampleScanReport,
+    section_bodies: Mapping[int, str],
+    llm_completer: Callable[[str, str], dict[str, Any]],
+    *,
+    limit: int = LLM_REWRITES_MAX_SECTIONS,
+    preview_chars: int = LLM_REWRITES_BODY_PREVIEW_CHARS,
+) -> dict[int, str]:
+    """Call the LLM to extract opening-sentence rewrites for risky sections.
+
+    ``llm_completer`` is expected to behave like ``LLMClient.complete_json``
+    — take a system+user prompt pair and return a parsed JSON dict. Any
+    exception (network, API key, malformed JSON) is swallowed and turned
+    into an empty mapping so the caller can fall back to the deterministic
+    fix lines without aborting the pipeline.
+    """
+
+    user_prompt = build_sample_rewrites_user_prompt(
+        report, section_bodies, limit=limit, preview_chars=preview_chars
+    )
+    if not user_prompt:
+        return {}
+    try:
+        payload = llm_completer(LLM_REWRITES_SYSTEM_PROMPT, user_prompt)
+    except Exception:
+        return {}
+    return _parse_sample_rewrites_payload(payload)
+
+
+def apply_sample_rewrites(
+    report: SampleScanReport, rewrites: Mapping[int, str]
+) -> SampleScanReport:
+    """Return a new immutable report with LLM rewrites attached to sections.
+
+    Pure function — neither ``report`` nor any of its frozen
+    SampleSectionScore entries are mutated. Sections without a matching
+    rewrite (or with whitespace-only payloads) keep their original
+    ``opening_rewrite``. Returns the original ``report`` instance when
+    the mapping is empty so the immutability guarantee is preserved
+    without a wasted allocation.
+    """
+
+    if not rewrites:
+        return report
+    enriched: list[SampleSectionScore] = []
+    any_change = False
+    for sec in report.sections:
+        new_opening = rewrites.get(sec.index, "")
+        cleaned = (new_opening or "").strip()
+        if cleaned and cleaned != sec.opening_rewrite:
+            enriched.append(replace(sec, opening_rewrite=cleaned))
+            any_change = True
+        else:
+            enriched.append(sec)
+    if not any_change:
+        return report
+    return replace(report, sections=enriched)
+
+
+def section_bodies_from_paragraphs(
+    paragraphs: Iterable[dict[str, Any]],
+    *,
+    config: SampleScanConfig = DEFAULT_SAMPLE_SCAN_CONFIG,
+) -> dict[int, str]:
+    """Map ``section.index`` → body text for the LLM rewrite prompt.
+
+    Re-uses ``extract_sample_sections`` so the index space matches the
+    indices on the scored report — no risk of off-by-one when the LLM
+    prompt is assembled.
+    """
+
+    sections, _, _ = extract_sample_sections(paragraphs, config=config)
+    return {section.index: section.body for section in sections}

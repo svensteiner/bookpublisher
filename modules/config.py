@@ -144,6 +144,15 @@ class AppConfig:
     # heuristic template (which is good) ships first. Any LLM failure
     # silently falls back to the template — never an aborted run.
     amazon_html_llm_bullets_enabled: bool = False
+    # Optional LLM-Pass for the First-N%-Deep-Scan (Kindle-Sample) report.
+    # When enabled AND ``ANTHROPIC_API_KEY`` is set, the pipeline asks the
+    # LLM to rewrite the opening sentence of every drop-off-risk section
+    # (status REVIEW or FIX) so the author gets a concrete, paste-ready
+    # alternative instead of only a generic fix hint. Off by default: the
+    # heuristic fix lines are good enough to ship without an API key, and
+    # any LLM failure silently falls back to the deterministic path —
+    # never an aborted run.
+    sample_scan_llm_rewrites_enabled: bool = False
     # Optional matplotlib-backed PNG render of score_history.json.
     # Off by default: matplotlib is not in the install set, enabling it
     # bloats the Windows EXE for users who only consume the markdown
@@ -222,6 +231,9 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         readability_target_max=readability_max,
         amazon_html_llm_bullets_enabled=bool(
             data.get("amazon_html_llm_bullets_enabled", False)
+        ),
+        sample_scan_llm_rewrites_enabled=bool(
+            data.get("sample_scan_llm_rewrites_enabled", False)
         ),
         score_history_graph_enabled=bool(data.get("score_history_graph_enabled", False)),
         raw=data,

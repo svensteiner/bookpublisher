@@ -59,9 +59,13 @@ from modules.round_delta import RoundDelta, render_round_delta_markdown
 from modules.rounds import make_round_id, snapshot_round
 from modules.run_logger import RunLogger
 from modules.sample_scan import (
+    SampleScanReport,
+    apply_sample_rewrites,
     build_sample_scan_report,
+    extract_sample_rewrites_via_llm,
     render_sample_scan_markdown,
     sample_scan_config_from_app,
+    section_bodies_from_paragraphs,
 )
 from modules.score_history import (
     append_score_history,
@@ -984,6 +988,79 @@ class PublisherPipeline:
             return []
         return extract_chapter_intros(chapters)
 
+    def _maybe_apply_sample_llm_rewrites(
+        self,
+        project: BookProject,
+        sample_scan: SampleScanReport,
+    ) -> SampleScanReport:
+        """Return ``sample_scan`` enriched with LLM opening-sentence rewrites.
+
+        Gated by ``AppConfig.sample_scan_llm_rewrites_enabled`` AND the
+        presence of an ``ANTHROPIC_API_KEY``. Returns the original report
+        unchanged when either gate is closed, when there is no risky
+        section to rewrite, or when the LLM call produces nothing usable.
+        Any exception inside the LLM extractor is logged and converted into
+        a no-op so the deterministic fix lines stay intact — never an
+        aborted run.
+        """
+
+        if not self.config.sample_scan_llm_rewrites_enabled:
+            return sample_scan
+        if not self.llm.api_key:
+            self.logger.log(
+                "sample_scan_llm_rewrites_skipped",
+                project_id=project.project_id,
+                reason="missing_api_key",
+            )
+            return sample_scan
+        risky = [s for s in sample_scan.sections if s.status != "READY"]
+        if not risky:
+            self.logger.log(
+                "sample_scan_llm_rewrites_skipped",
+                project_id=project.project_id,
+                reason="no_risky_sections",
+            )
+            return sample_scan
+        if not project.manuscript:
+            return sample_scan
+        try:
+            from modules.sample_scan import _docx_paragraph_stream
+
+            paragraphs = _docx_paragraph_stream(project.manuscript)
+        except Exception as exc:
+            self.logger.log(
+                "sample_scan_llm_rewrites_failed",
+                project_id=project.project_id,
+                error=str(exc),
+                stage="paragraph_stream",
+            )
+            return sample_scan
+        section_bodies = section_bodies_from_paragraphs(
+            paragraphs,
+            config=sample_scan_config_from_app(self.config),
+        )
+        try:
+            rewrites = extract_sample_rewrites_via_llm(
+                sample_scan,
+                section_bodies,
+                self.llm.complete_json,
+            )
+        except Exception as exc:
+            self.logger.log(
+                "sample_scan_llm_rewrites_failed",
+                project_id=project.project_id,
+                error=str(exc),
+                stage="llm_call",
+            )
+            return sample_scan
+        self.logger.log(
+            "sample_scan_llm_rewrites_completed",
+            project_id=project.project_id,
+            rewrite_count=len(rewrites),
+            risky_section_count=len(risky),
+        )
+        return apply_sample_rewrites(sample_scan, rewrites)
+
     def _maybe_extract_amazon_llm_bullets(
         self, project: BookProject, *, chapter_titles: list[str]
     ) -> list[str] | None:
@@ -1153,6 +1230,9 @@ class PublisherPipeline:
                 sample_scan = build_sample_scan_report(
                     project,
                     config=sample_scan_config_from_app(self.config),
+                )
+                sample_scan = self._maybe_apply_sample_llm_rewrites(
+                    project, sample_scan
                 )
                 sample_json = sample_scan.to_json()
             except RuntimeError as exc:
