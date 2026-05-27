@@ -736,9 +736,17 @@ WEAKEST_SAMPLE_MAX_LIMIT = 10
 
 
 def _sample_section_dict(section: dict) -> dict:
-    """Project one sample-scan section into the render-payload shape."""
+    """Project one sample-scan section into the render-payload shape.
 
-    return {
+    Carries ``opening_rewrite`` through when the upstream sample-scan
+    produced an LLM-generated opening sentence for this section — so the
+    beginner_summary can surface the rewrite inline instead of forcing
+    the author to open ``sample_scan.md``. The key is omitted entirely
+    when no rewrite is present so the absence remains distinguishable
+    from an empty string.
+    """
+
+    payload: dict[str, Any] = {
         "index": section.get("index"),
         "label": section.get("label") or "",
         "overall": int(section.get("overall") or 0),
@@ -746,6 +754,12 @@ def _sample_section_dict(section: dict) -> dict:
         "risk": section.get("risk") or "",
         "fix": section.get("fix") or "",
     }
+    rewrite = section.get("opening_rewrite")
+    if isinstance(rewrite, str):
+        cleaned = rewrite.strip()
+        if cleaned:
+            payload["opening_rewrite"] = cleaned
+    return payload
 
 
 def _weakest_samples_payload(

@@ -917,11 +917,13 @@ def _render_top_kdp_keywords(
 
 
 def _render_sample_section_line(section: dict[str, Any]) -> list[str]:
-    """Format one sample-scan section into two markdown lines.
+    """Format one sample-scan section into two-or-three markdown lines.
 
-    Returns a `[bullet, fix_line]` pair that matches the existing
-    single-section rendering so single- and multi-section blocks stay
-    visually consistent.
+    Returns a `[bullet, fix_line]` pair, optionally followed by a third
+    `Vorschlag Eroeffnungssatz: _..._` line when an LLM-generated
+    opening rewrite is attached (`opening_rewrite` non-empty). The
+    rewrite is suppressed entirely when missing so untouched sections
+    keep the historical two-line shape and no stub-italics noise.
     """
 
     label = str(section.get("label") or "").strip()
@@ -932,10 +934,14 @@ def _render_sample_section_line(section: dict[str, Any]) -> list[str]:
     badge, _ = score_badge(score)
     headline = label or f"Abschnitt {index}"
     risk_suffix = f" — {risk}" if risk else ""
-    return [
+    lines = [
         f"- {badge} **Abschnitt {index} — {headline}** ({score}/100){risk_suffix}",
         f"  Fix: {fix}",
     ]
+    rewrite = str(section.get("opening_rewrite") or "").strip()
+    if rewrite:
+        lines.append(f"  Vorschlag Eroeffnungssatz: _{rewrite}_")
+    return lines
 
 
 def _render_weakest_samples(

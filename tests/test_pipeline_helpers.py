@@ -275,6 +275,79 @@ def test_weakest_samples_payload_normalizes_section_fields():
     ]
 
 
+def test_weakest_samples_payload_carries_opening_rewrite_when_present():
+    """Sections with an LLM rewrite must surface it in the beginner payload."""
+
+    payload = {
+        "sections": [
+            {
+                "index": 2,
+                "label": "Eroeffnung",
+                "overall": 48,
+                "status": "FIX",
+                "risk": "ABBRUCH-RISIKO",
+                "fix": "fix-2",
+                "opening_rewrite": "Was bremst dich, wenn der naechste Termin platzt?",
+            }
+        ]
+    }
+    samples = _weakest_samples_payload(payload)
+    assert samples == [
+        {
+            "index": 2,
+            "label": "Eroeffnung",
+            "overall": 48,
+            "status": "FIX",
+            "risk": "ABBRUCH-RISIKO",
+            "fix": "fix-2",
+            "opening_rewrite": "Was bremst dich, wenn der naechste Termin platzt?",
+        }
+    ]
+
+
+def test_weakest_samples_payload_omits_blank_opening_rewrite():
+    """An empty/whitespace rewrite must not leak into the payload as a key."""
+
+    payload = {
+        "sections": [
+            _section(1, 40, "FIX", label="Eins"),
+            {
+                "index": 2,
+                "label": "Zwei",
+                "overall": 50,
+                "status": "FIX",
+                "risk": "RISK",
+                "fix": "fix-2",
+                "opening_rewrite": "   ",
+            },
+        ]
+    }
+    samples = _weakest_samples_payload(payload, limit=2)
+    for sample in samples:
+        assert "opening_rewrite" not in sample
+
+
+def test_weakest_samples_payload_ignores_non_string_opening_rewrite():
+    """Defensive: a non-string rewrite payload must be dropped silently."""
+
+    payload = {
+        "sections": [
+            {
+                "index": 1,
+                "label": "Eins",
+                "overall": 40,
+                "status": "FIX",
+                "risk": "RISK",
+                "fix": "fix-1",
+                "opening_rewrite": 42,
+            }
+        ]
+    }
+    samples = _weakest_samples_payload(payload)
+    assert samples[0].get("opening_rewrite") is None
+    assert "opening_rewrite" not in samples[0]
+
+
 def test_weakest_sample_payload_remains_first_element_of_list_payload():
     """The backwards-compat single-dict helper must agree with the list head."""
 

@@ -543,6 +543,112 @@ def test_render_beginner_summary_weakest_samples_empty_list_omits_section():
     assert "Schwächste Sample-Abschnitte" not in summary
 
 
+def test_render_beginner_summary_weakest_sample_shows_opening_rewrite_when_present():
+    """An LLM rewrite on the payload must surface inline in beginner_summary."""
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    samples = [
+        {
+            "index": 2,
+            "label": "Eroeffnung",
+            "overall": 48,
+            "status": "FIX",
+            "risk": "ABBRUCH-RISIKO",
+            "fix": "Setze einen Hook-Satz mit konkreter Zahl an den Anfang.",
+            "opening_rewrite": "Was bremst dich, wenn der naechste Termin platzt?",
+        }
+    ]
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_samples=samples
+    )
+    assert (
+        "Vorschlag Eroeffnungssatz: _Was bremst dich, wenn der naechste "
+        "Termin platzt?_" in summary
+    )
+
+
+def test_render_beginner_summary_weakest_sample_omits_rewrite_line_when_absent():
+    """Without a rewrite the inline italics line must not appear at all."""
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    samples = [
+        {
+            "index": 2,
+            "label": "Eroeffnung",
+            "overall": 48,
+            "status": "FIX",
+            "risk": "ABBRUCH-RISIKO",
+            "fix": "Setze einen Hook-Satz mit konkreter Zahl an den Anfang.",
+        }
+    ]
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_samples=samples
+    )
+    assert "Vorschlag Eroeffnungssatz" not in summary
+
+
+def test_render_beginner_summary_weakest_sample_omits_rewrite_line_when_blank():
+    """Whitespace-only rewrite must be treated as absent — no stub italics."""
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    samples = [
+        {
+            "index": 2,
+            "label": "Eroeffnung",
+            "overall": 48,
+            "status": "FIX",
+            "risk": "ABBRUCH-RISIKO",
+            "fix": "fix-here",
+            "opening_rewrite": "   ",
+        }
+    ]
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_samples=samples
+    )
+    assert "Vorschlag Eroeffnungssatz" not in summary
+
+
+def test_render_beginner_summary_weakest_samples_multi_renders_rewrites_per_section():
+    """Each section's rewrite must render against its own bullet, not bleed across."""
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    samples = [
+        {
+            "index": 2,
+            "label": "Eroeffnung",
+            "overall": 40,
+            "status": "FIX",
+            "risk": "ABBRUCH-RISIKO",
+            "fix": "fix-a",
+            "opening_rewrite": "Rewrite Alpha",
+        },
+        {
+            "index": 4,
+            "label": "Tiefe",
+            "overall": 55,
+            "status": "FIX",
+            "risk": "REVIEW",
+            "fix": "fix-b",
+        },
+        {
+            "index": 6,
+            "label": "Schluss",
+            "overall": 62,
+            "status": "REVIEW",
+            "risk": "",
+            "fix": "fix-c",
+            "opening_rewrite": "Rewrite Gamma",
+        },
+    ]
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None), result, weakest_samples=samples
+    )
+    assert "Vorschlag Eroeffnungssatz: _Rewrite Alpha_" in summary
+    assert "Vorschlag Eroeffnungssatz: _Rewrite Gamma_" in summary
+    # Section 4 has no rewrite — and there must not be a stray third line for it.
+    assert summary.count("Vorschlag Eroeffnungssatz:") == 2
+
+
 def test_render_beginner_summary_weakest_samples_takes_precedence_over_single():
     """When both params are passed, the list parameter wins (new API > legacy)."""
 
