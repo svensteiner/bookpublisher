@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from modules.config import AppConfig, ConfigError
-from modules.llm import LLMClient
+from modules.llm import INVALID_JSON_MESSAGE, LLMClient
 from modules.run_logger import RunLogger
 from tests.helpers import runtime_dir
 
@@ -473,6 +473,89 @@ def test_retry_attempts_clamped_to_minimum_one():
     assert result == "ok"
     # With attempts clamped to >=1, the primary is still called once.
     assert calls == [PRIMARY_MODEL]
+
+
+# --- complete_json: robust parsing, never a raw traceback ----------------
+
+
+def _client_with_response(workspace: Path, response_text: str) -> LLMClient:
+    """Build a client whose ``complete`` returns a fixed string (no network)."""
+
+    client = _build_client(workspace)
+    client.complete = lambda system, user, model=None: response_text  # type: ignore[assignment]
+    return client
+
+
+def test_complete_json_parses_clean_object():
+    workspace = runtime_dir("llm_json_clean")
+    client = _client_with_response(workspace, '{"score": 87, "ok": true}')
+
+    result = client.complete_json("sys", "usr")
+
+    assert result == {"score": 87, "ok": True}
+
+
+def test_complete_json_extracts_object_from_surrounding_prose():
+    workspace = runtime_dir("llm_json_prose")
+    client = _client_with_response(
+        workspace, 'Hier ist das Ergebnis:\n{"keyword": "fokus"}\nViel Erfolg!'
+    )
+
+    result = client.complete_json("sys", "usr")
+
+    assert result == {"keyword": "fokus"}
+
+
+def test_complete_json_extracts_inner_object_from_top_level_array():
+    # A top-level array would, if returned raw, masquerade as a dict and
+    # blow up later in a `.get(...)` call. The regex must recover the inner
+    # object instead.
+    workspace = runtime_dir("llm_json_array")
+    client = _client_with_response(workspace, '[{"index": 1, "opening": "x"}]')
+
+    result = client.complete_json("sys", "usr")
+
+    assert isinstance(result, dict)
+    assert result == {"index": 1, "opening": "x"}
+
+
+def test_complete_json_raises_config_error_on_malformed_brace_match():
+    # The regex finds braces but the content is not valid JSON — previously
+    # this raised a raw json.JSONDecodeError (traceback for the end-user).
+    workspace = runtime_dir("llm_json_malformed")
+    client = _client_with_response(workspace, "Antwort: {kaputt: [nicht, json}")
+
+    with pytest.raises(ConfigError) as exc_info:
+        client.complete_json("sys", "usr")
+
+    assert str(exc_info.value) == INVALID_JSON_MESSAGE
+
+
+def test_complete_json_raises_config_error_when_no_json_at_all():
+    workspace = runtime_dir("llm_json_none")
+    client = _client_with_response(workspace, "Tut mir leid, ich habe keine Daten.")
+
+    with pytest.raises(ConfigError) as exc_info:
+        client.complete_json("sys", "usr")
+
+    assert str(exc_info.value) == INVALID_JSON_MESSAGE
+
+
+def test_complete_json_raises_config_error_on_non_dict_scalar():
+    workspace = runtime_dir("llm_json_scalar")
+    client = _client_with_response(workspace, "42")
+
+    with pytest.raises(ConfigError):
+        client.complete_json("sys", "usr")
+
+
+def test_loads_json_object_returns_none_for_non_dict_and_garbage():
+    assert LLMClient._loads_json_object("[1, 2, 3]") is None
+    assert LLMClient._loads_json_object('"a string"') is None
+    assert LLMClient._loads_json_object("null") is None
+    assert LLMClient._loads_json_object("not json at all") is None
+    assert LLMClient._loads_json_object("") is None
+    assert LLMClient._loads_json_object('{"ok": 1}') == {"ok": 1}
 
 
 def test_load_config_reads_retry_settings_from_yaml(tmp_path):

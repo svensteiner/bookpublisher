@@ -11,6 +11,16 @@ from modules.run_logger import RunLogger
 
 MAX_TOKENS = 4096
 
+# User-facing message when the model never returns parseable JSON. German
+# and actionable — the author sees this instead of a Python traceback, and
+# the suggested fix (just retry) resolves the vast majority of transient
+# JSON-shape glitches.
+INVALID_JSON_MESSAGE = (
+    "Das Modell hat keine gueltige JSON-Antwort geliefert. "
+    "Starte die Pruefrunde erneut — meist liefert der naechste Versuch ein "
+    "gueltiges Ergebnis. Keine Quelldatei wurde veraendert."
+)
+
 
 class LLMClient:
     # Sleep hook for exponential backoff between retries. Tests override
@@ -184,12 +194,32 @@ class LLMClient:
             "total_calls": total_calls,
         }
 
+    @staticmethod
+    def _loads_json_object(text: str) -> dict[str, Any] | None:
+        """Parse ``text`` into a JSON object, or return ``None`` on any failure.
+
+        Never raises: malformed JSON, a non-string input, or a valid-but-
+        non-dict payload (list, number, string, ``null``) all collapse to
+        ``None`` so the caller can try the next strategy or surface a single
+        friendly error. Enforcing the dict shape here stops a top-level JSON
+        array from masquerading as ``dict[str, Any]`` and triggering a
+        deferred ``AttributeError`` in a downstream ``.get(...)`` call.
+        """
+
+        try:
+            value = json.loads(text)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
     def complete_json(self, system: str, user: str) -> dict[str, Any]:
         text = self.complete(system, user)
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", text, flags=re.S)
-            if match:
-                return json.loads(match.group(0))
-            raise ConfigError("Model did not return valid JSON.")
+        parsed = self._loads_json_object(text)
+        if parsed is not None:
+            return parsed
+        match = re.search(r"\{.*\}", text, flags=re.S)
+        if match:
+            parsed = self._loads_json_object(match.group(0))
+            if parsed is not None:
+                return parsed
+        raise ConfigError(INVALID_JSON_MESSAGE)
