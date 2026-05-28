@@ -128,6 +128,14 @@ HYPE_MARKERS: str = (
 # 40-word colossi.
 LONG_SENTENCE_WORDS: int = 35
 
+# Provenance labels for the per-section opening rewrite. Downstream tools
+# (release packager, CI checks, beginner_summary highlight) read
+# ``rewrite_source`` from sample_scan.json to decide which path produced
+# the rewrite without having to compare the prose against the manuscript.
+# Analog to ``bullets_source`` in amazon_description.json.
+REWRITE_SOURCE_LLM: str = "llm"
+REWRITE_SOURCES: tuple[str, ...] = (REWRITE_SOURCE_LLM,)
+
 
 @dataclass(frozen=True)
 class SampleSection:
@@ -169,6 +177,12 @@ class SampleSectionScore:
     # rewriting). Always one paste-ready sentence on German, never multiple
     # lines or quoted markup. The original manuscript text is never mutated.
     opening_rewrite: str = ""
+    # Provenance for ``opening_rewrite``. ``""`` when no rewrite is attached;
+    # ``"llm"`` when ``apply_sample_rewrites`` injected an LLM-generated
+    # sentence. Future heuristic/hybrid pipelines can extend ``REWRITE_SOURCES``
+    # — downstream tools key off this label instead of inferring from the
+    # presence of ``opening_rewrite``.
+    rewrite_source: str = ""
 
     def to_json(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -189,6 +203,8 @@ class SampleSectionScore:
         }
         if self.opening_rewrite:
             payload["opening_rewrite"] = self.opening_rewrite
+            if self.rewrite_source:
+                payload["rewrite_source"] = self.rewrite_source
         return payload
 
 
@@ -810,7 +826,10 @@ def extract_sample_rewrites_via_llm(
 
 
 def apply_sample_rewrites(
-    report: SampleScanReport, rewrites: Mapping[int, str]
+    report: SampleScanReport,
+    rewrites: Mapping[int, str],
+    *,
+    source: str = REWRITE_SOURCE_LLM,
 ) -> SampleScanReport:
     """Return a new immutable report with LLM rewrites attached to sections.
 
@@ -820,17 +839,29 @@ def apply_sample_rewrites(
     ``opening_rewrite``. Returns the original ``report`` instance when
     the mapping is empty so the immutability guarantee is preserved
     without a wasted allocation.
+
+    ``source`` is stamped onto every section that receives a rewrite so
+    downstream tools can detect the LLM pathway without inspecting the
+    prose. Defaults to ``REWRITE_SOURCE_LLM`` because the only in-tree
+    caller is the LLM-Pass; future heuristic/hybrid pipelines pass their
+    own label. Unknown sources fall back to ``REWRITE_SOURCE_LLM`` rather
+    than persisting an arbitrary string into the artifact.
     """
 
     if not rewrites:
         return report
+    label = source if source in REWRITE_SOURCES else REWRITE_SOURCE_LLM
     enriched: list[SampleSectionScore] = []
     any_change = False
     for sec in report.sections:
         new_opening = rewrites.get(sec.index, "")
         cleaned = (new_opening or "").strip()
-        if cleaned and cleaned != sec.opening_rewrite:
-            enriched.append(replace(sec, opening_rewrite=cleaned))
+        if cleaned and (
+            cleaned != sec.opening_rewrite or sec.rewrite_source != label
+        ):
+            enriched.append(
+                replace(sec, opening_rewrite=cleaned, rewrite_source=label)
+            )
             any_change = True
         else:
             enriched.append(sec)

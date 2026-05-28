@@ -759,6 +759,11 @@ def _sample_section_dict(section: dict) -> dict:
         cleaned = rewrite.strip()
         if cleaned:
             payload["opening_rewrite"] = cleaned
+            source = section.get("rewrite_source")
+            if isinstance(source, str):
+                source_clean = source.strip()
+                if source_clean:
+                    payload["rewrite_source"] = source_clean
     return payload
 
 

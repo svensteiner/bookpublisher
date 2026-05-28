@@ -21,6 +21,8 @@ from modules.sample_scan import (
     LLM_REWRITES_MAX_OPENING_CHARS,
     LLM_REWRITES_MAX_SECTIONS,
     LLM_REWRITES_MIN_OPENING_CHARS,
+    REWRITE_SOURCE_LLM,
+    REWRITE_SOURCES,
     SampleScanReport,
     SampleSectionScore,
     _parse_sample_rewrites_payload,
@@ -458,3 +460,106 @@ def test_constants_have_sane_values():
     assert LLM_REWRITES_MIN_OPENING_CHARS >= 8
     assert LLM_REWRITES_MAX_OPENING_CHARS >= 80
     assert LLM_REWRITES_MAX_SECTIONS >= 1
+
+
+# --- rewrite_source provenance --------------------------------------------
+
+
+def test_section_score_default_rewrite_source_is_empty():
+    report = build_sample_scan_report_from_paragraphs(_weak_paragraphs())
+
+    assert all(sec.rewrite_source == "" for sec in report.sections)
+
+
+def test_section_score_to_json_omits_rewrite_source_when_no_rewrite():
+    report = build_sample_scan_report_from_paragraphs(_weak_paragraphs())
+    payload = report.sections[0].to_json()
+
+    assert "rewrite_source" not in payload
+    assert "opening_rewrite" not in payload
+
+
+def test_section_score_to_json_omits_rewrite_source_when_source_blank():
+    # An opening_rewrite without a recorded source must not leak an empty
+    # provenance label into the artifact — downstream tools should treat
+    # the absence of the key as "unknown provenance" rather than crash on
+    # an empty-string value.
+    report = build_sample_scan_report_from_paragraphs(_weak_paragraphs())
+    enriched = replace(
+        report.sections[0],
+        opening_rewrite="Drei konkrete Hebel statt Theorie — ab Seite eins.",
+        rewrite_source="",
+    )
+
+    payload = enriched.to_json()
+
+    assert payload["opening_rewrite"].startswith("Drei konkrete Hebel")
+    assert "rewrite_source" not in payload
+
+
+def test_section_score_to_json_emits_rewrite_source_when_present():
+    report = build_sample_scan_report_from_paragraphs(_weak_paragraphs())
+    enriched = replace(
+        report.sections[0],
+        opening_rewrite="Drei konkrete Hebel statt Theorie — ab Seite eins.",
+        rewrite_source=REWRITE_SOURCE_LLM,
+    )
+
+    payload = enriched.to_json()
+
+    assert payload["rewrite_source"] == "llm"
+
+
+def test_apply_rewrites_stamps_llm_source_by_default():
+    report = build_sample_scan_report_from_paragraphs(_weak_paragraphs())
+    risky = next(sec for sec in report.sections if sec.status != "READY")
+
+    enriched = apply_sample_rewrites(
+        report,
+        {risky.index: "Drei konkrete Hebel statt Theorie — ab Seite eins."},
+    )
+
+    target = next(sec for sec in enriched.sections if sec.index == risky.index)
+    assert target.rewrite_source == REWRITE_SOURCE_LLM
+    # Original report still has the default (no source) for that section.
+    original = next(sec for sec in report.sections if sec.index == risky.index)
+    assert original.rewrite_source == ""
+
+
+def test_apply_rewrites_unknown_source_falls_back_to_llm():
+    report = build_sample_scan_report_from_paragraphs(_weak_paragraphs())
+    risky = next(sec for sec in report.sections if sec.status != "READY")
+
+    enriched = apply_sample_rewrites(
+        report,
+        {risky.index: "Stell dir vor: dein naechstes Quartal ohne diese Falle."},
+        source="heuristic-future-path",  # not in REWRITE_SOURCES yet
+    )
+
+    target = next(sec for sec in enriched.sections if sec.index == risky.index)
+    assert target.rewrite_source == REWRITE_SOURCE_LLM
+
+
+def test_apply_rewrites_unchanged_sections_keep_default_source():
+    report = build_sample_scan_report_from_paragraphs(_weak_paragraphs())
+    risky_indices = [sec.index for sec in report.sections if sec.status != "READY"]
+    target_index = risky_indices[0]
+
+    enriched = apply_sample_rewrites(
+        report,
+        {target_index: "Drei konkrete Hebel statt Theorie — ab Seite eins."},
+    )
+
+    for sec in enriched.sections:
+        if sec.index == target_index:
+            assert sec.rewrite_source == REWRITE_SOURCE_LLM
+        else:
+            assert sec.rewrite_source == ""
+
+
+def test_rewrite_sources_constant_contains_llm():
+    # Pins the constant so a future refactor that drops the LLM label
+    # tells us via the failing test instead of silently breaking
+    # downstream tools that key on "llm".
+    assert REWRITE_SOURCE_LLM == "llm"
+    assert REWRITE_SOURCE_LLM in REWRITE_SOURCES

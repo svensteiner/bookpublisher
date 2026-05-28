@@ -327,6 +327,93 @@ def test_weakest_samples_payload_omits_blank_opening_rewrite():
         assert "opening_rewrite" not in sample
 
 
+def test_weakest_samples_payload_carries_rewrite_source_when_present():
+    """A non-empty rewrite_source must follow the opening_rewrite through."""
+
+    payload = {
+        "sections": [
+            {
+                "index": 2,
+                "label": "Eroeffnung",
+                "overall": 48,
+                "status": "FIX",
+                "risk": "ABBRUCH-RISIKO",
+                "fix": "fix-2",
+                "opening_rewrite": "Was bremst dich, wenn der naechste Termin platzt?",
+                "rewrite_source": "llm",
+            }
+        ]
+    }
+    samples = _weakest_samples_payload(payload)
+    assert samples[0]["rewrite_source"] == "llm"
+
+
+def test_weakest_samples_payload_omits_rewrite_source_when_no_rewrite():
+    """A rewrite_source without an opening_rewrite is meaningless — drop it."""
+
+    payload = {
+        "sections": [
+            {
+                "index": 1,
+                "label": "Eins",
+                "overall": 40,
+                "status": "FIX",
+                "risk": "RISK",
+                "fix": "fix-1",
+                # No opening_rewrite — rewrite_source must not leak alone.
+                "rewrite_source": "llm",
+            }
+        ]
+    }
+    samples = _weakest_samples_payload(payload)
+    assert "opening_rewrite" not in samples[0]
+    assert "rewrite_source" not in samples[0]
+
+
+def test_weakest_samples_payload_omits_blank_rewrite_source():
+    """A whitespace-only rewrite_source must not leak into the payload."""
+
+    payload = {
+        "sections": [
+            {
+                "index": 1,
+                "label": "Eins",
+                "overall": 40,
+                "status": "FIX",
+                "risk": "RISK",
+                "fix": "fix-1",
+                "opening_rewrite": "Was bremst dich, wenn der naechste Termin platzt?",
+                "rewrite_source": "   ",
+            }
+        ]
+    }
+    samples = _weakest_samples_payload(payload)
+    assert samples[0]["opening_rewrite"].startswith("Was bremst")
+    assert "rewrite_source" not in samples[0]
+
+
+def test_weakest_samples_payload_ignores_non_string_rewrite_source():
+    """Defensive: a non-string rewrite_source must be dropped silently."""
+
+    payload = {
+        "sections": [
+            {
+                "index": 1,
+                "label": "Eins",
+                "overall": 40,
+                "status": "FIX",
+                "risk": "RISK",
+                "fix": "fix-1",
+                "opening_rewrite": "Was bremst dich, wenn der naechste Termin platzt?",
+                "rewrite_source": 99,
+            }
+        ]
+    }
+    samples = _weakest_samples_payload(payload)
+    assert samples[0]["opening_rewrite"].startswith("Was bremst")
+    assert "rewrite_source" not in samples[0]
+
+
 def test_weakest_samples_payload_ignores_non_string_opening_rewrite():
     """Defensive: a non-string rewrite payload must be dropped silently."""
 
