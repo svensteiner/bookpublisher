@@ -7,6 +7,8 @@ message with a concrete next step - not a Python traceback.
 
 from __future__ import annotations
 
+import sys
+import types
 import zipfile
 from pathlib import Path
 
@@ -157,6 +159,174 @@ def test_read_pdf_text_raises_friendly_error_for_missing_file():
 
     assert "no_book.pdf" in str(exc_info.value)
     assert "pdf" in str(exc_info.value).lower()
+
+
+class _FakePage:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def get_text(self, _mode: str) -> str:
+        return self._text
+
+
+class _FakeDocument:
+    """Mimics the subset of a PyMuPDF document the reader touches."""
+
+    def __init__(self, pages: list[str]) -> None:
+        self._pages = [_FakePage(text) for text in pages]
+        self.closed = False
+
+    def __iter__(self):
+        return iter(self._pages)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _install_fake_fitz(monkeypatch: pytest.MonkeyPatch, *, opener) -> dict:
+    """Inject a fake `fitz` module so reader tests need no real PDF binary.
+
+    Returns a mutable state dict the caller can inspect after the call
+    (e.g. to assert the document was closed)."""
+    state: dict = {"opened": None}
+    module = types.ModuleType("fitz")
+
+    def _open(_path):  # noqa: ANN001 - mirrors fitz.open signature
+        doc = opener(_path)
+        state["opened"] = doc
+        return doc
+
+    module.open = _open  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fitz", module)
+    return state
+
+
+def test_read_pdf_text_raises_friendly_error_for_directory_input(monkeypatch):
+    workspace = runtime_dir("readers_pdf_dir")
+    _install_fake_fitz(monkeypatch, opener=lambda _p: _FakeDocument(["irrelevant"]))
+
+    with pytest.raises(ManuscriptReadError) as exc_info:
+        read_pdf_text(workspace)
+
+    message = str(exc_info.value).lower()
+    assert "ordner" in message
+    assert ".pdf" in message
+    assert "Traceback" not in str(exc_info.value)
+
+
+def test_read_pdf_text_returns_joined_pages_and_closes_document(monkeypatch):
+    workspace = runtime_dir("readers_pdf_ok")
+    pdf = workspace / "book.pdf"
+    pdf.write_bytes(b"%PDF-1.4 placeholder")
+    state = _install_fake_fitz(
+        monkeypatch,
+        opener=lambda _p: _FakeDocument(["Seite eins", "Seite zwei"]),
+    )
+
+    result = read_pdf_text(pdf)
+
+    assert result == "Seite eins\nSeite zwei"
+    assert state["opened"].closed is True
+
+
+def test_read_pdf_text_respects_max_pages_and_closes(monkeypatch):
+    workspace = runtime_dir("readers_pdf_maxpages")
+    pdf = workspace / "long.pdf"
+    pdf.write_bytes(b"%PDF-1.4 placeholder")
+    state = _install_fake_fitz(
+        monkeypatch,
+        opener=lambda _p: _FakeDocument([f"S{i}" for i in range(10)]),
+    )
+
+    result = read_pdf_text(pdf, max_pages=3)
+
+    assert result == "S0\nS1\nS2"
+    assert state["opened"].closed is True
+
+
+def test_read_pdf_text_wraps_open_failure_as_friendly_error(monkeypatch):
+    workspace = runtime_dir("readers_pdf_open_fail")
+    pdf = workspace / "corrupt.pdf"
+    pdf.write_bytes(b"not a real pdf")
+
+    def _boom(_path):
+        raise RuntimeError("fitz internal failure")
+
+    _install_fake_fitz(monkeypatch, opener=_boom)
+
+    with pytest.raises(ManuscriptReadError) as exc_info:
+        read_pdf_text(pdf)
+
+    message = str(exc_info.value)
+    assert "corrupt.pdf" in message
+    assert "beschaedigt" in message.lower()
+    assert "Traceback" not in message
+
+
+def test_read_pdf_text_wraps_page_read_failure_and_closes(monkeypatch):
+    workspace = runtime_dir("readers_pdf_page_fail")
+    pdf = workspace / "page_fail.pdf"
+    pdf.write_bytes(b"%PDF-1.4 placeholder")
+
+    class _FailingPage:
+        def get_text(self, _mode: str) -> str:
+            raise RuntimeError("page decode error")
+
+    class _FailingDocument(_FakeDocument):
+        def __init__(self) -> None:
+            super().__init__([])
+            self._pages = [_FailingPage()]
+
+    state = _install_fake_fitz(monkeypatch, opener=lambda _p: _FailingDocument())
+
+    with pytest.raises(ManuscriptReadError) as exc_info:
+        read_pdf_text(pdf)
+
+    message = str(exc_info.value)
+    assert "page_fail.pdf" in message
+    assert "seiten" in message.lower()
+    assert state["opened"].closed is True
+    assert "Traceback" not in message
+
+
+def test_read_pdf_text_does_not_swallow_manuscript_read_error(monkeypatch):
+    """A ManuscriptReadError raised mid-read must propagate unchanged,
+    not be re-wrapped by the broad except block."""
+    workspace = runtime_dir("readers_pdf_passthrough")
+    pdf = workspace / "passthrough.pdf"
+    pdf.write_bytes(b"%PDF-1.4 placeholder")
+
+    sentinel_hint = "EINDEUTIGER-SENTINEL-HINWEIS"
+
+    class _RaisingPage:
+        def get_text(self, _mode: str) -> str:
+            raise ManuscriptReadError(pdf, reason="Innerer Fehler.", hint=sentinel_hint)
+
+    class _RaisingDocument(_FakeDocument):
+        def __init__(self) -> None:
+            super().__init__([])
+            self._pages = [_RaisingPage()]
+
+    state = _install_fake_fitz(monkeypatch, opener=lambda _p: _RaisingDocument())
+
+    with pytest.raises(ManuscriptReadError) as exc_info:
+        read_pdf_text(pdf)
+
+    assert exc_info.value.hint == sentinel_hint
+    assert state["opened"].closed is True
+
+
+def test_read_pdf_text_missing_file_check_runs_before_open(monkeypatch):
+    """The not-exists branch must fire even with a working fitz, so the
+    customer never reaches a confusing fitz error for a missing path."""
+    workspace = runtime_dir("readers_pdf_missing_order")
+    missing = workspace / "ghost.pdf"
+    state = _install_fake_fitz(monkeypatch, opener=lambda _p: _FakeDocument(["x"]))
+
+    with pytest.raises(ManuscriptReadError):
+        read_pdf_text(missing)
+
+    assert state["opened"] is None  # fitz.open never reached
 
 
 def test_chapters_module_propagates_friendly_error():

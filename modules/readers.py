@@ -130,9 +130,17 @@ def read_pdf_text(path: Path, max_pages: int = 25) -> str:
             reason="Die PDF-Datei wurde an diesem Pfad nicht gefunden.",
             hint="Pruefe den Buchordner und waehle ihn erneut aus.",
         )
+    if path_obj.is_dir():
+        raise ManuscriptReadError(
+            path_obj,
+            reason="Der Pfad zeigt auf einen Ordner statt auf eine PDF-Datei.",
+            hint="Waehle stattdessen die konkrete .pdf-Datei innerhalb des Ordners aus.",
+        )
 
     try:
         doc = fitz.open(path_obj)
+    except ManuscriptReadError:
+        raise
     except Exception as exc:
         raise ManuscriptReadError(
             path_obj,
@@ -140,12 +148,23 @@ def read_pdf_text(path: Path, max_pages: int = 25) -> str:
             hint="Exportiere die PDF neu oder pruefe sie in einem PDF-Viewer.",
         ) from exc
 
-    texts = []
-    for idx, page in enumerate(doc):
-        if idx >= max_pages:
-            break
-        texts.append(page.get_text("text"))
-    return "\n".join(texts)
+    try:
+        texts: list[str] = []
+        for idx, page in enumerate(doc):
+            if idx >= max_pages:
+                break
+            texts.append(page.get_text("text"))
+        return "\n".join(texts)
+    except ManuscriptReadError:
+        raise
+    except Exception as exc:
+        raise ManuscriptReadError(
+            path_obj,
+            reason=f"Die Seiten der PDF-Datei konnten nicht gelesen werden: {exc}",
+            hint="Exportiere die PDF neu oder pruefe sie in einem PDF-Viewer.",
+        ) from exc
+    finally:
+        doc.close()
 
 
 def read_text_file(path: Path) -> str:
