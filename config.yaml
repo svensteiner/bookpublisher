@@ -80,6 +80,14 @@ readability_target_max: 80
 # Any LLM failure falls back silently to the heuristic path.
 sample_scan_llm_rewrites_enabled: false
 
+# Optional LLM-Pass for the per-chapter analysis (chapter_review). When
+# enabled AND ANTHROPIC_API_KEY is set, every weak chapter (status REVIEW
+# or FIX) gets a concrete, manuscript-grounded LLM fix line in
+# chapter_review.md/.json on top of the deterministic hint. Off by default
+# because the heuristic fixes already ship without an API key; any LLM
+# failure falls back silently to the heuristic path.
+chapter_review_llm_fixes_enabled: false
+
 # Optional matplotlib-backed PNG render of the score history. Off by
 # default because matplotlib is not in the install set and would bloat
 # the Windows EXE. Enable with `score_history_graph_enabled: true` and

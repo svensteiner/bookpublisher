@@ -13,7 +13,10 @@ from modules.amazon_html import (
 )
 from modules.artifacts import ArtifactWriter
 from modules.chapters import (
+    ChapterReport,
+    apply_chapter_fixes,
     balance_thresholds_from_app,
+    extract_chapter_fixes_via_llm,
     extract_chapter_intros,
     extract_docx_chapters,
 )
@@ -38,9 +41,10 @@ from modules.persona_match import build_persona_match_report, render_persona_mat
 from modules.personas import PersonaReport, build_persona_report, render_persona_report_markdown
 from modules.review import (
     amazon_review,
+    build_chapter_review_report,
     chapter_arc_review,
-    chapter_review,
     checklist,
+    render_chapter_review,
     executive_summary,
     launch_content,
     manuscript_review,
@@ -1007,6 +1011,74 @@ class PublisherPipeline:
             return []
         return extract_chapter_intros(chapters)
 
+    def _maybe_apply_chapter_llm_fixes(
+        self,
+        project: BookProject,
+        report: ChapterReport,
+    ) -> ChapterReport:
+        """Return ``report`` enriched with LLM fix lines for weak chapters.
+
+        Gated by ``AppConfig.chapter_review_llm_fixes_enabled`` AND the
+        presence of an ``ANTHROPIC_API_KEY``. Returns the original report
+        unchanged when either gate is closed, when there is no weak chapter
+        to enrich, when there is no manuscript, or when the LLM call
+        produces nothing usable. Any exception inside the LLM extractor is
+        logged and converted into a no-op so the deterministic fix lines
+        stay intact — never an aborted run.
+        """
+
+        if not self.config.chapter_review_llm_fixes_enabled:
+            return report
+        if not self.llm.api_key:
+            self.logger.log(
+                "chapter_review_llm_fixes_skipped",
+                project_id=project.project_id,
+                reason="missing_api_key",
+            )
+            return report
+        risky = [c for c in report.chapters if c.status != "READY"]
+        if not risky:
+            self.logger.log(
+                "chapter_review_llm_fixes_skipped",
+                project_id=project.project_id,
+                reason="no_weak_chapters",
+            )
+            return report
+        if not project.manuscript:
+            return report
+        try:
+            chapters = extract_docx_chapters(project.manuscript)
+            chapter_bodies = {c.index: c.body for c in chapters}
+        except Exception as exc:
+            self.logger.log(
+                "chapter_review_llm_fixes_failed",
+                project_id=project.project_id,
+                error=str(exc),
+                stage="chapter_extraction",
+            )
+            return report
+        try:
+            fixes = extract_chapter_fixes_via_llm(
+                report,
+                chapter_bodies,
+                self.llm.complete_json,
+            )
+        except Exception as exc:
+            self.logger.log(
+                "chapter_review_llm_fixes_failed",
+                project_id=project.project_id,
+                error=str(exc),
+                stage="llm_call",
+            )
+            return report
+        self.logger.log(
+            "chapter_review_llm_fixes_completed",
+            project_id=project.project_id,
+            fix_count=len(fixes),
+            weak_chapter_count=len(risky),
+        )
+        return apply_chapter_fixes(report, fixes)
+
     def _maybe_apply_sample_llm_rewrites(
         self,
         project: BookProject,
@@ -1224,9 +1296,15 @@ class PublisherPipeline:
             chapter_json: dict | None = None
             chapter_md: str | None = None
             try:
-                chapter_md, chapter_json = chapter_review(
+                chapter_report = build_chapter_review_report(
                     project,
                     balance_thresholds=balance_thresholds_from_app(self.config),
+                )
+                chapter_report = self._maybe_apply_chapter_llm_fixes(
+                    project, chapter_report
+                )
+                chapter_md, chapter_json = render_chapter_review(
+                    project, chapter_report
                 )
                 chapter_titles = [
                     str(c.get("title") or "")

@@ -213,6 +213,34 @@ def launch_content(project: BookProject, config: AppConfig, llm: LLMClient) -> s
     )
 
 
+def build_chapter_review_report(
+    project: BookProject,
+    *,
+    balance_thresholds: BalanceThresholds | None = None,
+) -> ChapterReport:
+    """Build the per-chapter heuristic report without rendering.
+
+    Pure-Python; safe to call in QA mode without an LLM API key. Exposed
+    separately from ``chapter_review`` so the pipeline can run the optional
+    LLM-Pass over the report object before it is rendered to markdown/JSON.
+    Returns an empty report when the project has no manuscript.
+    """
+
+    if not project.manuscript:
+        return ChapterReport(chapters=[], average_score=0, weakest_chapter_index=None)
+    chapters = extract_docx_chapters(project.manuscript)
+    return build_chapter_report(chapters, balance_thresholds=balance_thresholds)
+
+
+def render_chapter_review(
+    project: BookProject, report: ChapterReport
+) -> tuple[str, dict]:
+    """Render a ChapterReport to ``(markdown, json_payload)``."""
+
+    title = project.title or project.project_id
+    return render_chapter_report_markdown(title, report), report.to_json()
+
+
 def chapter_review(
     project: BookProject,
     *,
@@ -225,14 +253,10 @@ def chapter_review(
     cutoffs for lesson-style nonfiction.
     """
 
-    if not project.manuscript:
-        empty = ChapterReport(chapters=[], average_score=0, weakest_chapter_index=None)
-        title = project.title or project.project_id
-        return render_chapter_report_markdown(title, empty), empty.to_json()
-    chapters = extract_docx_chapters(project.manuscript)
-    report = build_chapter_report(chapters, balance_thresholds=balance_thresholds)
-    title = project.title or project.project_id
-    return render_chapter_report_markdown(title, report), report.to_json()
+    report = build_chapter_review_report(
+        project, balance_thresholds=balance_thresholds
+    )
+    return render_chapter_review(project, report)
 
 
 def readability_review(

@@ -153,6 +153,14 @@ class AppConfig:
     # any LLM failure silently falls back to the deterministic path —
     # never an aborted run.
     sample_scan_llm_rewrites_enabled: bool = False
+    # Optional LLM-Pass for the per-chapter analysis (chapter_review).
+    # When enabled AND ``ANTHROPIC_API_KEY`` is set, the pipeline asks the
+    # LLM to enrich the fix line of every weak chapter (status REVIEW or
+    # FIX) with a concrete, manuscript-grounded instruction instead of only
+    # the generic heuristic hint. Off by default: the heuristic fixes are
+    # good enough to ship without an API key, and any LLM failure silently
+    # falls back to the deterministic path — never an aborted run.
+    chapter_review_llm_fixes_enabled: bool = False
     # Optional matplotlib-backed PNG render of score_history.json.
     # Off by default: matplotlib is not in the install set, enabling it
     # bloats the Windows EXE for users who only consume the markdown
@@ -234,6 +242,9 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         ),
         sample_scan_llm_rewrites_enabled=bool(
             data.get("sample_scan_llm_rewrites_enabled", False)
+        ),
+        chapter_review_llm_fixes_enabled=bool(
+            data.get("chapter_review_llm_fixes_enabled", False)
         ),
         score_history_graph_enabled=bool(data.get("score_history_graph_enabled", False)),
         raw=data,

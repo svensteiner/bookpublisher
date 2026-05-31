@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import re
 import statistics
-from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from modules.scoring import (
     SCORE_BADGE_FIX,
@@ -141,9 +141,20 @@ class ChapterScore:
     overall: int
     status: str
     fix: str
+    # Optional LLM-enriched fix for the chapter. Empty string when no
+    # LLM-Pass ran OR the chapter is already READY (no fix worth
+    # enriching). One concrete, manuscript-grounded fix instruction on
+    # German. The deterministic ``fix`` is never overwritten — both ship
+    # so the author can compare the generic hint with the specific advice.
+    llm_fix: str = ""
+    # Provenance for ``llm_fix``. ``""`` when no enriched fix is attached;
+    # ``"llm"`` when ``apply_chapter_fixes`` injected an LLM-generated fix.
+    # Downstream tools key off this label instead of inferring from the
+    # presence of ``llm_fix``. Analog to ``rewrite_source`` in sample_scan.
+    fix_source: str = ""
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "index": self.index,
             "title": self.title,
             "word_count": self.word_count,
@@ -157,6 +168,11 @@ class ChapterScore:
             "status": self.status,
             "fix": self.fix,
         }
+        if self.llm_fix:
+            payload["llm_fix"] = self.llm_fix
+            if self.fix_source:
+                payload["fix_source"] = self.fix_source
+        return payload
 
 
 def _is_heading(style: str) -> bool:
@@ -623,6 +639,8 @@ def render_chapter_report_markdown(title: str, report: ChapterReport) -> str:
         lines.append("")
         lines.append(f"- Score: **{chap.overall}/100** ({chap.status})")
         lines.append(f"- Fix: {chap.fix}")
+        if chap.llm_fix:
+            lines.append(f"- LLM-Fix: {chap.llm_fix}")
         lines.append("")
 
     lines.extend(_render_balance_section(report.balance))
@@ -668,3 +686,239 @@ def _render_balance_section(balance: ChapterBalanceReport | None) -> list[str]:
             lines.append(f"  Fix: {outlier.fix}")
         lines.append("")
     return lines
+
+
+# --- Optional LLM-Pass: per-chapter fix enrichment ------------------------
+
+# Provenance label for an LLM-enriched chapter fix. Mirrors the
+# ``REWRITE_SOURCE_LLM`` convention in modules/sample_scan.py so downstream
+# tools detect the LLM pathway from a stable label, not from prose.
+FIX_SOURCE_LLM: str = "llm"
+FIX_SOURCES: tuple[str, ...] = (FIX_SOURCE_LLM,)
+
+LLM_FIXES_SYSTEM_PROMPT: str = (
+    "Du bist ein erfahrener Sachbuch-Lektor fuer den deutschen KDP-Markt. "
+    "Deine Aufgabe: fuer jedes uebergebene Kapitel einen konkreten, "
+    "umsetzbaren Verbesserungs-Hinweis liefern, der die schwaechste Dimension "
+    "(Versprechen, Beweis, Wert oder Uebergang) gezielt staerkt. Beziehe dich "
+    "auf den uebergebenen Kapiteltext, nenne wenn moeglich die konkrete Stelle. "
+    "Pro Kapitel genau EIN Hinweis auf Deutsch, max 280 Zeichen, ohne Hype, "
+    "ohne Ausrufezeichen, ohne Marketing-Floskeln. "
+    "Antworte ausschliesslich als JSON mit dem Schluessel 'fixes' "
+    "(Array von Objekten {index: int, fix: str}). Kein zusaetzlicher Text."
+)
+
+# Hard caps so the LLM prompt stays cheap and bounded regardless of book size.
+LLM_FIXES_MAX_CHAPTERS: int = 6
+LLM_FIXES_BODY_PREVIEW_CHARS: int = 400
+LLM_FIXES_MAX_FIX_CHARS: int = 280
+LLM_FIXES_MIN_FIX_CHARS: int = 20
+
+# Human-readable label for the weakest dimension, shipped in the prompt so
+# the LLM enriches the exact axis the heuristic flagged.
+_DIMENSION_LABELS: dict[str, str] = {
+    "promise": "Versprechen",
+    "proof": "Beweis",
+    "value": "Wert",
+    "transition": "Uebergang",
+}
+
+
+def _chapter_body_preview(body: str, *, max_chars: int) -> str:
+    """Clip a chapter body to a small preview window for the LLM prompt."""
+
+    cleaned = re.sub(r"\s+", " ", (body or "").strip())
+    if len(cleaned) <= max_chars:
+        return cleaned
+    cut = cleaned.rfind(" ", 0, max_chars)
+    if cut < int(max_chars * 0.6):
+        cut = max_chars
+    return cleaned[:cut].rstrip(" ,;:-") + "…"
+
+
+def _weakest_dimension(chapter: ChapterScore) -> str:
+    """Return the lowest-scoring reader-impact dimension key."""
+
+    dims = {
+        "promise": chapter.promise,
+        "proof": chapter.proof,
+        "value": chapter.value,
+        "transition": chapter.transition,
+    }
+    return min(dims, key=dims.get)
+
+
+def _risky_chapters_for_fix(
+    report: ChapterReport, *, limit: int = LLM_FIXES_MAX_CHAPTERS
+) -> list[ChapterScore]:
+    """Pick the chapters most worth enriching with an LLM fix.
+
+    Only chapters whose status is REVIEW or FIX are eligible — READY
+    chapters already convert, so an enriched fix would be churn. The
+    result is sorted by overall score ascending (worst first) so the LLM
+    budget hits the most impactful chapters first when the cap kicks in.
+    """
+
+    risky = [c for c in report.chapters if c.status != "READY"]
+    risky.sort(key=lambda c: (c.overall, c.index))
+    capped = max(0, int(limit))
+    return risky[:capped]
+
+
+def build_chapter_fixes_user_prompt(
+    report: ChapterReport,
+    chapter_bodies: Mapping[int, str],
+    *,
+    limit: int = LLM_FIXES_MAX_CHAPTERS,
+    preview_chars: int = LLM_FIXES_BODY_PREVIEW_CHARS,
+) -> str:
+    """Render the user prompt for the LLM chapter-fix enricher.
+
+    Only risky chapters are listed so the LLM does not waste tokens on
+    already-strong chapters. Each block carries the chapter title, scores,
+    the weakest dimension AND a clipped preview of the body so the LLM
+    grounds the fix in the actual prose. Empty when there are no risky
+    chapters — the caller short-circuits and never makes the LLM call.
+    """
+
+    candidates = _risky_chapters_for_fix(report, limit=limit)
+    if not candidates:
+        return ""
+    blocks: list[str] = []
+    for chap in candidates:
+        body = chapter_bodies.get(chap.index, "")
+        preview = _chapter_body_preview(body, max_chars=preview_chars)
+        weakest = _weakest_dimension(chap)
+        weakest_label = _DIMENSION_LABELS.get(weakest, weakest)
+        block_lines = [
+            f"Kapitel {chap.index}: {chap.title}",
+            f"- Aktueller Score: {chap.overall}/100 ({chap.status})",
+            f"- Schwaechste Dimension: {weakest_label}",
+            f"- Aktueller Fix-Hinweis: {chap.fix}",
+        ]
+        if preview:
+            block_lines.append(f"- Aktueller Text (gekuerzt): {preview}")
+        blocks.append("\n".join(block_lines))
+    body_block = "\n\n".join(blocks)
+    return (
+        "Hier sind die Kapitel mit Verbesserungsbedarf. Liefere fuer jedes "
+        "Kapitel einen konkreten Verbesserungs-Hinweis im geforderten "
+        "JSON-Format. Verwende exakt die uebergebenen 'index'-Werte.\n\n"
+        f"{body_block}"
+    )
+
+
+def _parse_chapter_fixes_payload(payload: Any) -> dict[int, str]:
+    """Extract ``{index: fix}`` from the LLM JSON response.
+
+    Tolerant to shape drift: skips non-dict entries, non-int indices,
+    non-string fixes, and fixes that are too short / too long. The
+    returned mapping is keyed by chapter index so the caller can apply
+    fixes without re-matching on title strings.
+    """
+
+    if not isinstance(payload, dict):
+        return {}
+    raw_entries = payload.get("fixes")
+    if not isinstance(raw_entries, list):
+        return {}
+    out: dict[int, str] = {}
+    for entry in raw_entries:
+        if not isinstance(entry, dict):
+            continue
+        raw_index = entry.get("index")
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        raw_fix = entry.get("fix")
+        if not isinstance(raw_fix, str):
+            continue
+        fix = re.sub(r"\s+", " ", raw_fix).strip().strip('"“”«»')
+        if "!" in fix:
+            continue
+        if len(fix) < LLM_FIXES_MIN_FIX_CHARS:
+            continue
+        if len(fix) > LLM_FIXES_MAX_FIX_CHARS:
+            fix = fix[:LLM_FIXES_MAX_FIX_CHARS].rstrip(" ,;:-") + "…"
+        out[index] = fix
+    return out
+
+
+def extract_chapter_fixes_via_llm(
+    report: ChapterReport,
+    chapter_bodies: Mapping[int, str],
+    llm_completer: Callable[[str, str], dict[str, Any]],
+    *,
+    limit: int = LLM_FIXES_MAX_CHAPTERS,
+    preview_chars: int = LLM_FIXES_BODY_PREVIEW_CHARS,
+) -> dict[int, str]:
+    """Call the LLM to enrich fix lines for risky chapters.
+
+    ``llm_completer`` is expected to behave like ``LLMClient.complete_json``
+    — take a system+user prompt pair and return a parsed JSON dict. Any
+    exception (network, API key, malformed JSON) is swallowed and turned
+    into an empty mapping so the caller can fall back to the deterministic
+    fix lines without aborting the pipeline.
+    """
+
+    user_prompt = build_chapter_fixes_user_prompt(
+        report, chapter_bodies, limit=limit, preview_chars=preview_chars
+    )
+    if not user_prompt:
+        return {}
+    try:
+        payload = llm_completer(LLM_FIXES_SYSTEM_PROMPT, user_prompt)
+    except Exception:
+        return {}
+    return _parse_chapter_fixes_payload(payload)
+
+
+def apply_chapter_fixes(
+    report: ChapterReport,
+    fixes: Mapping[int, str],
+    *,
+    source: str = FIX_SOURCE_LLM,
+) -> ChapterReport:
+    """Return a new immutable report with LLM fixes attached to chapters.
+
+    Pure function — neither ``report`` nor any of its frozen ChapterScore
+    entries are mutated. Chapters without a matching fix (or with
+    whitespace-only payloads) keep their original ``llm_fix``. Returns the
+    original ``report`` instance when the mapping is empty so the
+    immutability guarantee is preserved without a wasted allocation.
+
+    ``source`` is stamped onto every chapter that receives a fix so
+    downstream tools can detect the LLM pathway. Unknown sources fall back
+    to ``FIX_SOURCE_LLM`` rather than persisting an arbitrary string.
+    """
+
+    if not fixes:
+        return report
+    label = source if source in FIX_SOURCES else FIX_SOURCE_LLM
+    enriched: list[ChapterScore] = []
+    any_change = False
+    for chap in report.chapters:
+        new_fix = (fixes.get(chap.index) or "").strip()
+        if new_fix and (new_fix != chap.llm_fix or chap.fix_source != label):
+            enriched.append(replace(chap, llm_fix=new_fix, fix_source=label))
+            any_change = True
+        else:
+            enriched.append(chap)
+    if not any_change:
+        return report
+    return replace(report, chapters=enriched)
+
+
+def chapter_bodies_from_paragraphs(
+    paragraphs: Iterable[dict[str, Any]],
+) -> dict[int, str]:
+    """Map ``chapter.index`` → body text for the LLM fix prompt.
+
+    Re-uses ``split_paragraphs_into_chapters`` so the index space matches
+    the indices on the scored report — no risk of off-by-one when the LLM
+    prompt is assembled. Pure: never reads from disk, never mutates inputs.
+    """
+
+    chapters = split_paragraphs_into_chapters(paragraphs)
+    return {chapter.index: chapter.body for chapter in chapters}
