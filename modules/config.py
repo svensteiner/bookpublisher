@@ -161,6 +161,15 @@ class AppConfig:
     # good enough to ship without an API key, and any LLM failure silently
     # falls back to the deterministic path — never an aborted run.
     chapter_review_llm_fixes_enabled: bool = False
+    # Optional LLM-Pass for the concrete rewrite suggestions (rewrite_suggestions).
+    # When enabled AND ``ANTHROPIC_API_KEY`` is set, the pipeline asks the
+    # LLM to rewrite the author's actual title / subtitle / description-lead
+    # directly (only for fields with a diagnosis finding) and APPENDS those
+    # variants next to the deterministic bestseller-pattern templates. Off by
+    # default: the template variants ship fine without an API key, and any
+    # LLM failure silently falls back to the template-only report — never an
+    # aborted run.
+    rewrite_llm_variants_enabled: bool = False
     # Optional matplotlib-backed PNG render of score_history.json.
     # Off by default: matplotlib is not in the install set, enabling it
     # bloats the Windows EXE for users who only consume the markdown
@@ -245,6 +254,9 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         ),
         chapter_review_llm_fixes_enabled=bool(
             data.get("chapter_review_llm_fixes_enabled", False)
+        ),
+        rewrite_llm_variants_enabled=bool(
+            data.get("rewrite_llm_variants_enabled", False)
         ),
         score_history_graph_enabled=bool(data.get("score_history_graph_enabled", False)),
         raw=data,

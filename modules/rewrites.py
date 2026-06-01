@@ -20,7 +20,8 @@ output stays specific instead of generic.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from modules.discovery import BookProject
@@ -70,6 +71,13 @@ FALLBACK_AUDIENCES: tuple[str, ...] = (
     "Operatoren",
 )
 
+# Provenance labels for a rewrite option. ``template`` is the default
+# (deterministic bestseller-pattern variant); ``llm`` marks a variant the
+# optional LLM-Pass produced by rewriting the author's own original.
+REWRITE_SOURCE_TEMPLATE: str = "template"
+REWRITE_SOURCE_LLM: str = "llm"
+REWRITE_SOURCES: tuple[str, ...] = (REWRITE_SOURCE_TEMPLATE, REWRITE_SOURCE_LLM)
+
 
 @dataclass(frozen=True)
 class RewriteOption:
@@ -79,6 +87,12 @@ class RewriteOption:
     char_count: int
     keyword_score: int
     motivation: str
+    # Provenance: ``"template"`` for the deterministic bestseller-pattern
+    # variants, ``"llm"`` for variants the optional LLM-Pass rewrote
+    # directly from the author's original metadata. Mirrors the
+    # ``rewrite_source`` convention in modules/sample_scan.py so downstream
+    # tools detect the LLM pathway from a stable label, not from prose.
+    source: str = REWRITE_SOURCE_TEMPLATE
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -86,6 +100,7 @@ class RewriteOption:
             "char_count": self.char_count,
             "keyword_score": self.keyword_score,
             "motivation": self.motivation,
+            "source": self.source,
         }
 
 
@@ -462,6 +477,239 @@ def render_rewrite_report_markdown(project: BookProject, report: RewriteReport) 
                 f"- Zeichen: **{option.char_count}**",
                 f"- Keyword-Score: **{option.keyword_score}/100**",
                 f"- Kauf-Motivation: {option.motivation}",
-                "",
             ])
+            if option.source == REWRITE_SOURCE_LLM:
+                lines.append(
+                    "- Quelle: LLM-Pass (direkt aus deinem Original umgeschrieben)"
+                )
+            lines.append("")
     return "\n".join(lines)
+
+
+# --- Optional LLM-Pass: direct rewrites from the author's original --------
+#
+# The deterministic variants above follow proven bestseller patterns but
+# are template-shaped. When the toggle + API key are present, this pass
+# asks the LLM to rewrite the author's actual title / subtitle /
+# description-lead — staying closer to the book's real voice. The LLM
+# variants are APPENDED to the existing template options (never replace
+# them) so the author can compare both. Any failure falls back to the
+# template-only report — never an aborted run.
+
+LLM_VARIANTS_SYSTEM_PROMPT: str = (
+    "Du bist ein erfahrener Sachbuch-Lektor und KDP-Copywriter fuer den "
+    "deutschen Markt. Deine Aufgabe: das uebergebene Original-Metadatenfeld "
+    "(Titel, Untertitel oder Beschreibungs-Einstieg) so umschreiben, dass es "
+    "staerker konvertiert, ohne den Kern des Buches zu veraendern. Bleibe nah "
+    "am Original, behalte zentrale Begriffe (Anker-Keywords) bei und respektiere "
+    "das genannte Zeichen-Limit. Kein Hype, keine Ausrufezeichen, keine "
+    "Marketing-Floskeln wie 'ultimativ' oder 'garantiert'. "
+    "Antworte ausschliesslich als JSON mit dem Schluessel 'variants' "
+    "(Array von Objekten {field: str, text: str, motivation: str}). "
+    "Nutze exakt die uebergebenen 'field'-Werte. Kein zusaetzlicher Text."
+)
+
+# How many LLM variants to keep per field (cost + report-length cap).
+LLM_VARIANTS_PER_FIELD: int = 2
+# Default buyer motivation when the LLM omits one for a variant.
+LLM_VARIANTS_DEFAULT_MOTIVATION: str = (
+    "Buyer-Click: LLM-Variante direkt aus deinem Original umgeschrieben — "
+    "naeher an Stimme und Inhalt des Buches als die Template-Vorschlaege."
+)
+LLM_VARIANTS_MAX_MOTIVATION_CHARS: int = 280
+
+# Per-field maximum / minimum character budgets, reused from the
+# deterministic path so the LLM variants obey the same KDP-surface rules.
+_FIELD_MAX_CHARS: dict[str, int] = {
+    "title": TITLE_MAX_CHARS,
+    "subtitle": SUBTITLE_MAX_CHARS,
+    "description_lead": DESCRIPTION_LEAD_MAX_CHARS,
+}
+_FIELD_MIN_CHARS: dict[str, int] = {
+    "title": TITLE_MIN_CHARS,
+    "subtitle": SUBTITLE_MIN_CHARS,
+    "description_lead": DESCRIPTION_LEAD_MIN_CHARS,
+}
+
+
+def _bundles_needing_rewrite(report: RewriteReport) -> list[RewriteBundle]:
+    """Return bundles whose field has at least one diagnosis finding.
+
+    Fields already in good shape (empty diagnosis) are skipped so the LLM
+    budget only hits the metadata that actually needs copy work.
+    """
+
+    return [bundle for bundle in report.bundles if bundle.diagnosis]
+
+
+def build_rewrite_variants_user_prompt(report: RewriteReport) -> str:
+    """Render the user prompt for the LLM rewrite-variant generator.
+
+    Only fields with a diagnosis are listed, each carrying the original
+    text, the diagnosis findings and the hard character limit so the LLM
+    grounds its rewrite in the real metadata. Returns an empty string when
+    no field needs a rewrite — the caller short-circuits and never makes
+    the LLM call.
+    """
+
+    candidates = _bundles_needing_rewrite(report)
+    if not candidates:
+        return ""
+    anchor_line = (
+        ", ".join(report.anchors)
+        if report.anchors
+        else "(keine erkannt — Begriffe aus dem Original beibehalten)"
+    )
+    blocks: list[str] = []
+    for bundle in candidates:
+        heading = _FIELD_HEADINGS.get(bundle.field, bundle.field)
+        max_chars = _FIELD_MAX_CHARS.get(bundle.field, SUBTITLE_MAX_CHARS)
+        original = bundle.original.strip() or "(nicht gesetzt)"
+        block_lines = [
+            f"field: {bundle.field} ({heading})",
+            f"- Original: {original}",
+            f"- Zeichen-Limit: {max_chars}",
+        ]
+        if bundle.diagnosis:
+            block_lines.append("- Probleme: " + "; ".join(bundle.diagnosis))
+        blocks.append("\n".join(block_lines))
+    body_block = "\n\n".join(blocks)
+    return (
+        "Hier sind die Metadatenfelder mit Verbesserungsbedarf. Schreibe fuer "
+        f"jedes Feld {LLM_VARIANTS_PER_FIELD} alternative Texte im geforderten "
+        "JSON-Format. Behalte zentrale Begriffe bei.\n\n"
+        f"Anker-Keywords: {anchor_line}\n\n"
+        f"{body_block}"
+    )
+
+
+def _clean_variant_text(raw: str) -> str:
+    return re.sub(r"\s+", " ", raw).strip().strip('"“”«»')
+
+
+def _parse_rewrite_variants_payload(
+    payload: Any,
+) -> dict[str, list[tuple[str, str]]]:
+    """Extract ``{field: [(text, motivation), ...]}`` from the LLM response.
+
+    Tolerant to shape drift: skips non-dict entries, unknown fields,
+    non-string texts, texts with an exclamation mark (anti-hype), and texts
+    shorter than the field minimum. Texts longer than the field maximum are
+    clipped. At most ``LLM_VARIANTS_PER_FIELD`` variants survive per field.
+    """
+
+    if not isinstance(payload, dict):
+        return {}
+    raw_entries = payload.get("variants")
+    if not isinstance(raw_entries, list):
+        return {}
+    out: dict[str, list[tuple[str, str]]] = {}
+    for entry in raw_entries:
+        if not isinstance(entry, dict):
+            continue
+        field_key = entry.get("field")
+        if field_key not in _FIELD_MAX_CHARS:
+            continue
+        if len(out.get(field_key, [])) >= LLM_VARIANTS_PER_FIELD:
+            continue
+        raw_text = entry.get("text")
+        if not isinstance(raw_text, str):
+            continue
+        text = _clean_variant_text(raw_text)
+        if "!" in text:
+            continue
+        if len(text) < _FIELD_MIN_CHARS.get(field_key, TITLE_MIN_CHARS):
+            continue
+        text = _clip(text, _FIELD_MAX_CHARS[field_key])
+        if not text:
+            continue
+        raw_motivation = entry.get("motivation")
+        motivation = (
+            _clean_variant_text(raw_motivation)
+            if isinstance(raw_motivation, str)
+            else ""
+        )
+        if not motivation:
+            motivation = LLM_VARIANTS_DEFAULT_MOTIVATION
+        elif len(motivation) > LLM_VARIANTS_MAX_MOTIVATION_CHARS:
+            motivation = (
+                motivation[:LLM_VARIANTS_MAX_MOTIVATION_CHARS].rstrip(" ,;:-") + "…"
+            )
+        out.setdefault(field_key, []).append((text, motivation))
+    return out
+
+
+def extract_rewrite_variants_via_llm(
+    report: RewriteReport,
+    llm_completer: Callable[[str, str], dict[str, Any]],
+) -> dict[str, list[tuple[str, str]]]:
+    """Call the LLM to rewrite fields that need copy work.
+
+    ``llm_completer`` behaves like ``LLMClient.complete_json`` — takes a
+    system+user prompt pair and returns a parsed JSON dict. Any exception
+    (network, API key, malformed JSON) is swallowed and turned into an empty
+    mapping so the caller falls back to the deterministic template options
+    without aborting the pipeline.
+    """
+
+    user_prompt = build_rewrite_variants_user_prompt(report)
+    if not user_prompt:
+        return {}
+    try:
+        payload = llm_completer(LLM_VARIANTS_SYSTEM_PROMPT, user_prompt)
+    except Exception:
+        return {}
+    return _parse_rewrite_variants_payload(payload)
+
+
+def apply_rewrite_variants(
+    report: RewriteReport,
+    variants: Mapping[str, Sequence[tuple[str, str]]],
+    *,
+    source: str = REWRITE_SOURCE_LLM,
+) -> RewriteReport:
+    """Return a new report with LLM variants appended to matching bundles.
+
+    Pure function — neither ``report`` nor any frozen option is mutated.
+    LLM variants are appended after the existing template options of the
+    same field so the author can compare both. Bundles without a matching
+    variant keep their options untouched. Returns the original ``report``
+    instance when nothing was appended so the immutability guarantee holds
+    without a wasted allocation. ``source`` is stamped on every appended
+    option; unknown sources fall back to ``REWRITE_SOURCE_LLM``.
+    """
+
+    if not variants:
+        return report
+    label = source if source in REWRITE_SOURCES else REWRITE_SOURCE_LLM
+    new_bundles: list[RewriteBundle] = []
+    any_change = False
+    for bundle in report.bundles:
+        field_variants = variants.get(bundle.field)
+        if not field_variants:
+            new_bundles.append(bundle)
+            continue
+        added: list[RewriteOption] = []
+        for text, motivation in field_variants:
+            clipped = _clip(text, _FIELD_MAX_CHARS.get(bundle.field, SUBTITLE_MAX_CHARS))
+            if not clipped:
+                continue
+            added.append(
+                RewriteOption(
+                    text=clipped,
+                    char_count=len(clipped),
+                    keyword_score=score_keywords(clipped, report.anchors),
+                    motivation=motivation or LLM_VARIANTS_DEFAULT_MOTIVATION,
+                    source=label,
+                )
+            )
+        if not added:
+            new_bundles.append(bundle)
+            continue
+        new_bundles.append(
+            replace(bundle, options=[*bundle.options, *added])
+        )
+        any_change = True
+    if not any_change:
+        return report
+    return replace(report, bundles=new_bundles)

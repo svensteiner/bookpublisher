@@ -88,6 +88,15 @@ sample_scan_llm_rewrites_enabled: false
 # failure falls back silently to the heuristic path.
 chapter_review_llm_fixes_enabled: false
 
+# Optional LLM-Pass for the concrete rewrite suggestions (rewrite_suggestions).
+# When enabled AND ANTHROPIC_API_KEY is set, the pipeline rewrites the
+# author's actual title / subtitle / description-lead directly (only for
+# fields that have a diagnosis finding) and appends those variants next to
+# the deterministic bestseller-pattern templates in rewrite_suggestions.md/.json.
+# Off by default: the template variants ship fine without an API key; any
+# LLM failure falls back silently to the template-only report.
+rewrite_llm_variants_enabled: false
+
 # Optional matplotlib-backed PNG render of the score history. Off by
 # default because matplotlib is not in the install set and would bloat
 # the Windows EXE. Enable with `score_history_graph_enabled: true` and

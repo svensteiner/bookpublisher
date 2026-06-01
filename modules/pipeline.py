@@ -58,7 +58,13 @@ from modules.release_assets import (
     render_competitor_template_csv,
     render_kindle_preview_check,
 )
-from modules.rewrites import build_rewrite_report, render_rewrite_report_markdown
+from modules.rewrites import (
+    RewriteReport,
+    apply_rewrite_variants,
+    build_rewrite_report,
+    extract_rewrite_variants_via_llm,
+    render_rewrite_report_markdown,
+)
 from modules.round_delta import RoundDelta, render_round_delta_markdown
 from modules.rounds import make_round_id, snapshot_round
 from modules.run_logger import RunLogger
@@ -1079,6 +1085,61 @@ class PublisherPipeline:
         )
         return apply_chapter_fixes(report, fixes)
 
+    def _maybe_apply_rewrite_variants(
+        self,
+        project: BookProject,
+        report: RewriteReport,
+    ) -> RewriteReport:
+        """Return ``report`` with LLM rewrite variants appended for weak fields.
+
+        Gated by ``AppConfig.rewrite_llm_variants_enabled`` AND the presence
+        of an ``ANTHROPIC_API_KEY``. Works purely on the project's metadata
+        (title / subtitle / description) — no manuscript read needed. Returns
+        the original report unchanged when either gate is closed, when no
+        field has a diagnosis finding, or when the LLM call produces nothing
+        usable. Any exception inside the LLM extractor is logged and converted
+        into a no-op so the deterministic template variants stay intact —
+        never an aborted run.
+        """
+
+        if not self.config.rewrite_llm_variants_enabled:
+            return report
+        if not self.llm.api_key:
+            self.logger.log(
+                "rewrite_llm_variants_skipped",
+                project_id=project.project_id,
+                reason="missing_api_key",
+            )
+            return report
+        weak = [bundle for bundle in report.bundles if bundle.diagnosis]
+        if not weak:
+            self.logger.log(
+                "rewrite_llm_variants_skipped",
+                project_id=project.project_id,
+                reason="no_weak_fields",
+            )
+            return report
+        try:
+            variants = extract_rewrite_variants_via_llm(
+                report,
+                self.llm.complete_json,
+            )
+        except Exception as exc:
+            self.logger.log(
+                "rewrite_llm_variants_failed",
+                project_id=project.project_id,
+                error=str(exc),
+                stage="llm_call",
+            )
+            return report
+        self.logger.log(
+            "rewrite_llm_variants_completed",
+            project_id=project.project_id,
+            field_count=len(variants),
+            weak_field_count=len(weak),
+        )
+        return apply_rewrite_variants(report, variants)
+
     def _maybe_apply_sample_llm_rewrites(
         self,
         project: BookProject,
@@ -1344,6 +1405,9 @@ class PublisherPipeline:
                 limit=self.config.beginner_summary_weakest_sample_limit,
             )
             rewrite_report = build_rewrite_report(project)
+            rewrite_report = self._maybe_apply_rewrite_variants(
+                project, rewrite_report
+            )
             rewrite_json = rewrite_report.to_json()
             top_rewrite = _top_rewrite_payload(rewrite_json)
             delta = self.memory.compare_rounds(project.project_id, current_round_id=round_id)
