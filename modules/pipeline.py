@@ -33,6 +33,7 @@ from modules.kdp_keywords import (
     KDPKeyword,
     build_kdp_keywords,
     extract_kdp_categories,
+    extract_kdp_keywords_via_llm,
     find_keyword_conflicts,
     render_kdp_keywords_report_markdown,
 )
@@ -1259,6 +1260,46 @@ class PublisherPipeline:
         )
         return bullets or None
 
+    def _maybe_extract_kdp_llm_keywords(
+        self, project: BookProject, *, chapter_titles: list[str]
+    ) -> list[str] | None:
+        """Return LLM-extracted long-tail KDP keyword phrases when enabled.
+
+        Gated by ``AppConfig.kdp_keywords_llm_enabled`` AND a configured API
+        key. Returns ``None`` when the pass is disabled, no key is present,
+        or the LLM produced nothing usable — each path is logged so the run
+        trace shows which branch ran. Never raises: any exception inside the
+        extractor is converted into a logged warning so the deterministic
+        template path takes over without aborting the run.
+        """
+
+        if not self.config.kdp_keywords_llm_enabled:
+            return None
+        if not self.llm.api_key:
+            self.logger.log(
+                "kdp_keywords_llm_skipped",
+                project_id=project.project_id,
+                reason="missing_api_key",
+            )
+            return None
+        try:
+            phrases = extract_kdp_keywords_via_llm(
+                project, chapter_titles, self.llm.complete_json
+            )
+        except Exception as exc:
+            self.logger.log(
+                "kdp_keywords_llm_failed",
+                project_id=project.project_id,
+                error=str(exc),
+            )
+            return None
+        self.logger.log(
+            "kdp_keywords_llm_completed",
+            project_id=project.project_id,
+            phrase_count=len(phrases),
+        )
+        return phrases or None
+
     def run_review(self, input_path: Path) -> list[BookProject]:
         projects = self.discover(input_path)
         if not projects:
@@ -1468,7 +1509,10 @@ class PublisherPipeline:
                 readability_score=readability_score_value,
             )
             score_history_highlight = _score_history_payload(history)
-            kdp_keywords = build_kdp_keywords(project)
+            llm_keywords = self._maybe_extract_kdp_llm_keywords(
+                project, chapter_titles=chapter_titles
+            )
+            kdp_keywords = build_kdp_keywords(project, llm_phrases=llm_keywords)
             top_kdp_keywords = _top_kdp_keywords_payload(
                 kdp_keywords,
                 limit=self.config.beginner_summary_kdp_keyword_limit,

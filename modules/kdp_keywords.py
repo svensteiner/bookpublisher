@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Sequence
 
 from modules.discovery import BookProject
 from modules.rewrites import (
@@ -40,6 +40,27 @@ from modules.rewrites import (
 KDP_KEYWORD_SLOTS: int = 7
 KDP_KEYWORD_MAX_CHARS: int = 50
 KDP_KEYWORD_MIN_CHARS: int = 4
+
+# Provenance label for keyword slots filled by the optional LLM long-tail
+# pass. Downstream tooling reads ``source`` from kdp_keywords.json to tell
+# manuscript-derived phrases apart from the deterministic template paths.
+KDP_KEYWORD_SOURCE_LLM: str = "llm_longtail"
+
+# Maximum number of the 7 KDP slots the LLM long-tail phrases may occupy.
+# Capped below the total so the strongest deterministic subject/audience
+# slots always survive — the author gets a mix of manuscript-derived
+# long-tail phrases and the proven template paths, never 7 LLM guesses.
+LLM_KEYWORDS_MAX_SLOTS: int = 5
+
+# Maximum number of chapter titles forwarded to the LLM. Keeps the prompt
+# cheap and forces the model to mine the strongest search intents instead
+# of mirroring the whole table of contents.
+LLM_KEYWORDS_MAX_CHAPTER_TITLES: int = 20
+
+# A real long-tail search phrase carries at least two words. Single-word
+# LLM output ("finanzen") is dropped — those head terms are already covered
+# by the deterministic subject pipeline.
+LLM_KEYWORDS_MIN_WORDS: int = 2
 
 FORMAT_MODIFIERS: tuple[str, ...] = (
     "ratgeber",
@@ -370,8 +391,50 @@ def _fallback_phrases() -> Iterable[tuple[str, str, str]]:
         )
 
 
-def build_kdp_keywords(project: BookProject) -> list[KDPKeyword]:
-    """Return up to 7 KDP-ready keyword strings for a project."""
+def _llm_phrases(
+    llm_phrases: Sequence[str] | None,
+) -> Iterable[tuple[str, str, str]]:
+    """Yield validated LLM long-tail phrases, capped at LLM_KEYWORDS_MAX_SLOTS.
+
+    Each phrase must survive normalization and carry at least
+    ``LLM_KEYWORDS_MIN_WORDS`` words so single-word head terms (already
+    covered by the deterministic subject pipeline) are dropped. Non-string
+    items are ignored. The final KDP rule-check (char limit, forbidden
+    tokens, title repetition, dedupe) still runs in :func:`_make_keyword`.
+    """
+
+    if not llm_phrases:
+        return
+    emitted = 0
+    for raw in llm_phrases:
+        if emitted >= LLM_KEYWORDS_MAX_SLOTS:
+            return
+        if not isinstance(raw, str):
+            continue
+        normalized = _normalize_phrase(raw)
+        if len(normalized.split()) < LLM_KEYWORDS_MIN_WORDS:
+            continue
+        emitted += 1
+        yield (
+            normalized,
+            KDP_KEYWORD_SOURCE_LLM,
+            "Long-Tail-Phrase aus dem Manuskript — echte Amazon-Suchanfrage statt Template.",
+        )
+
+
+def build_kdp_keywords(
+    project: BookProject,
+    *,
+    llm_phrases: Sequence[str] | None = None,
+) -> list[KDPKeyword]:
+    """Return up to 7 KDP-ready keyword strings for a project.
+
+    When ``llm_phrases`` is provided, up to ``LLM_KEYWORDS_MAX_SLOTS`` of the
+    LLM-derived long-tail phrases claim the first slots (after the same KDP
+    rule-check as every other source), and the deterministic pipelines fill
+    the remaining slots. With ``llm_phrases=None`` the result is identical to
+    the pure-template path, so the generator stays usable without an API key.
+    """
 
     subject = _extract_subject(project)
     audience = _extract_audience(project) or FALLBACK_AUDIENCES[0]
@@ -382,6 +445,7 @@ def build_kdp_keywords(project: BookProject) -> list[KDPKeyword]:
     seen: set[str] = set()
 
     pipelines: list[Iterable[tuple[str, str, str]]] = [
+        _llm_phrases(llm_phrases),
         _subject_phrases(subject, audience),
         _audience_phrases(audience),
         _anchor_phrases(anchors),
@@ -538,3 +602,93 @@ def render_kdp_keywords_report_markdown(
         "und du sparst Zeichen.",
     ])
     return "\n".join(lines)
+
+
+# --- Optional LLM-Pass for long-tail keyword extraction -------------------
+
+LLM_KEYWORDS_SYSTEM_PROMPT: str = (
+    "Du bist ein KDP-Keyword-Stratege fuer den deutschen Sachbuchmarkt. "
+    "Deine Aufgabe: aus Titel, Untertitel, Beschreibung und Kapitel-Titeln "
+    "die staerksten Long-Tail-Suchphrasen ableiten, die ein Leser bei Amazon "
+    "tatsaechlich eintippt. Jede Phrase besteht aus 2 bis 5 Woertern, ist "
+    "konkret und thematisch (kein Hype, keine Marketing-Floskeln, keine "
+    "subjektiven Begriffe wie 'bestseller' oder 'kostenlos'), wiederholt nicht "
+    "nur den Buchtitel und ist hoechstens 50 Zeichen lang. Antworte "
+    "ausschliesslich als JSON mit dem Schluessel 'keywords' (Array aus bis zu "
+    "7 Strings). Kein zusaetzlicher Text."
+)
+
+
+def build_kdp_keywords_user_prompt(
+    project: BookProject,
+    chapter_titles: Sequence[str],
+) -> str:
+    """Render the user prompt for the LLM long-tail keyword extractor.
+
+    Chapter titles are capped via ``LLM_KEYWORDS_MAX_CHAPTER_TITLES`` so the
+    prompt stays bounded even on books with many chapters.
+    """
+
+    title = (project.title or "").strip() or "(kein Titel)"
+    subtitle = (project.subtitle or "").strip() or "(kein Untertitel)"
+    description = (project.amazon_description or "").strip() or "(keine Beschreibung)"
+    chapters_capped = [
+        c for c in list(chapter_titles)[:LLM_KEYWORDS_MAX_CHAPTER_TITLES] if c
+    ]
+    if chapters_capped:
+        chapter_block = "\n".join(f"- {c}" for c in chapters_capped)
+    else:
+        chapter_block = "(keine Kapitel-Titel verfuegbar)"
+    return (
+        f"Titel: {title}\n"
+        f"Untertitel: {subtitle}\n\n"
+        "Amazon-Beschreibung:\n"
+        f"{description}\n\n"
+        "Kapitel-Titel:\n"
+        f"{chapter_block}\n\n"
+        "Liefere bis zu 7 Long-Tail-Suchphrasen im geforderten JSON-Format."
+    )
+
+
+def _parse_llm_keywords_payload(payload: Any) -> list[str]:
+    """Extract keyword phrase strings from the LLM JSON response.
+
+    Robust to shape drift: a non-dict payload, a missing/non-list
+    ``keywords`` key, or non-string / empty items all collapse to a clean
+    list (possibly empty) without raising.
+    """
+
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("keywords")
+    if not isinstance(raw, list):
+        return []
+    phrases: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            stripped = item.strip()
+            if stripped:
+                phrases.append(stripped)
+    return phrases
+
+
+def extract_kdp_keywords_via_llm(
+    project: BookProject,
+    chapter_titles: Sequence[str],
+    llm_completer: Callable[[str, str], dict[str, Any]],
+) -> list[str]:
+    """Call the LLM to extract book-specific long-tail keyword phrases.
+
+    ``llm_completer`` is expected to behave like ``LLMClient.complete_json``
+    — take a system+user prompt pair and return a parsed JSON dict. Any
+    exception (network, API key, malformed JSON) is swallowed and turned
+    into an empty list so the caller can fall back to the deterministic
+    template path without aborting the pipeline.
+    """
+
+    user_prompt = build_kdp_keywords_user_prompt(project, chapter_titles)
+    try:
+        payload = llm_completer(LLM_KEYWORDS_SYSTEM_PROMPT, user_prompt)
+    except Exception:
+        return []
+    return _parse_llm_keywords_payload(payload)

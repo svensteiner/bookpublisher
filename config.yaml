@@ -97,6 +97,14 @@ chapter_review_llm_fixes_enabled: false
 # LLM failure falls back silently to the template-only report.
 rewrite_llm_variants_enabled: false
 
+# Optional LLM-Pass for the 7 KDP keyword slots (kdp_keywords). When enabled
+# AND ANTHROPIC_API_KEY is set, the pipeline mines real long-tail search
+# phrases from the metadata + chapter titles; up to LLM_KEYWORDS_MAX_SLOTS of
+# them claim the first slots, the rest are filled by the deterministic
+# template paths. Off by default: the template slots ship fine without an API
+# key; any LLM failure falls back silently to the template-only keyword list.
+kdp_keywords_llm_enabled: false
+
 # Optional matplotlib-backed PNG render of the score history. Off by
 # default because matplotlib is not in the install set and would bloat
 # the Windows EXE. Enable with `score_history_graph_enabled: true` and

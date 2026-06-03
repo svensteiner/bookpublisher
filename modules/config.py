@@ -170,6 +170,15 @@ class AppConfig:
     # LLM failure silently falls back to the template-only report — never an
     # aborted run.
     rewrite_llm_variants_enabled: bool = False
+    # Optional LLM-Pass for the 7 KDP keyword slots (kdp_keywords). When
+    # enabled AND ``ANTHROPIC_API_KEY`` is set, the pipeline asks the LLM to
+    # mine real long-tail search phrases from the metadata + chapter titles
+    # and lets up to ``LLM_KEYWORDS_MAX_SLOTS`` of them claim the first slots,
+    # filling the rest with the deterministic template paths. Off by default:
+    # the template slots ship fine without an API key, and any LLM failure
+    # silently falls back to the template-only keyword list — never an
+    # aborted run.
+    kdp_keywords_llm_enabled: bool = False
     # Optional matplotlib-backed PNG render of score_history.json.
     # Off by default: matplotlib is not in the install set, enabling it
     # bloats the Windows EXE for users who only consume the markdown
@@ -257,6 +266,9 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         ),
         rewrite_llm_variants_enabled=bool(
             data.get("rewrite_llm_variants_enabled", False)
+        ),
+        kdp_keywords_llm_enabled=bool(
+            data.get("kdp_keywords_llm_enabled", False)
         ),
         score_history_graph_enabled=bool(data.get("score_history_graph_enabled", False)),
         raw=data,

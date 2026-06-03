@@ -109,6 +109,19 @@ def test_kdp_keyword_limit_clamps_below_one():
     assert loaded.beginner_summary_kdp_keyword_limit == 1
 
 
+def test_kdp_keywords_llm_defaults_to_false():
+    loaded = _minimal_config("config_kdp_kw_llm_default")
+    assert loaded.kdp_keywords_llm_enabled is False
+
+
+def test_kdp_keywords_llm_reads_yaml_true():
+    loaded = _minimal_config(
+        "config_kdp_kw_llm_true",
+        extra="kdp_keywords_llm_enabled: true\n",
+    )
+    assert loaded.kdp_keywords_llm_enabled is True
+
+
 def test_weakest_limit_defaults_to_three():
     loaded = _minimal_config("config_weakest_default")
     assert loaded.beginner_summary_weakest_limit == 3
