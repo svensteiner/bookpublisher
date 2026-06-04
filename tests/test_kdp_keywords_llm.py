@@ -15,12 +15,15 @@ from modules.kdp_keywords import (
     KDP_KEYWORD_MAX_CHARS,
     KDP_KEYWORD_SLOTS,
     KDP_KEYWORD_SOURCE_LLM,
+    KeywordQualityResult,
+    LLM_KEYWORDS_HYPE_TOKENS,
     LLM_KEYWORDS_MAX_CHAPTER_TITLES,
     LLM_KEYWORDS_MAX_SLOTS,
     LLM_KEYWORDS_MIN_WORDS,
     build_kdp_keywords,
     build_kdp_keywords_user_prompt,
     extract_kdp_keywords_via_llm,
+    validate_llm_keywords,
     _parse_llm_keywords_payload,
 )
 
@@ -207,3 +210,86 @@ def test_llm_phrases_ignore_non_string_items():
     )
     llm_slots = [k for k in keywords if k.source == KDP_KEYWORD_SOURCE_LLM]
     assert len(llm_slots) == 2
+
+
+# --- validate_llm_keywords (anti-hype quality gate) ----------------------
+
+
+def test_validate_keeps_clean_phrases_in_order():
+    result = validate_llm_keywords(
+        ["liquiditaet planen mittelstand", "cfo monatsabschluss schritt"]
+    )
+    assert isinstance(result, KeywordQualityResult)
+    assert result.accepted == (
+        "liquiditaet planen mittelstand",
+        "cfo monatsabschluss schritt",
+    )
+    assert result.rejected == ()
+
+
+def test_validate_rejects_hype_lemma():
+    result = validate_llm_keywords(["garantiert mehr umsatz", "saubere phrase hier"])
+    assert result.accepted == ("saubere phrase hier",)
+    assert result.rejected == (("garantiert mehr umsatz", "contains_hype:garantiert"),)
+
+
+def test_validate_rejects_umlaut_hype_lemma():
+    # "revolutionär" lives in the shared token list next to its ae/oe fold,
+    # so the gate catches it on the RAW phrase before normalization folds it.
+    result = validate_llm_keywords(["revolutionäre methode buch"])
+    assert result.accepted == ()
+    assert result.rejected[0][1].startswith("contains_hype:")
+
+
+def test_validate_rejects_exclamation():
+    result = validate_llm_keywords(["jetzt kaufen!"])
+    assert result.accepted == ()
+    assert result.rejected == (("jetzt kaufen!", "contains_exclamation"),)
+
+
+def test_validate_skips_empty_and_non_strings():
+    result = validate_llm_keywords(["", "   ", 7, None, "echte phrase"])  # type: ignore[list-item]
+    assert result.accepted == ("echte phrase",)
+    # Empty / whitespace-only are skipped silently; non-strings are recorded.
+    assert ("7", "non_string") in result.rejected
+    assert ("None", "non_string") in result.rejected
+
+
+def test_validate_trims_surviving_phrases():
+    result = validate_llm_keywords(["  phrase mit rand  "])
+    assert result.accepted == ("phrase mit rand",)
+
+
+def test_validate_result_is_immutable():
+    result = validate_llm_keywords(["saubere phrase hier"])
+    assert isinstance(result.accepted, tuple)
+    assert isinstance(result.rejected, tuple)
+
+
+def test_validate_hype_tokens_cover_known_lemmas():
+    # Spot-check the shared contract is wired through.
+    assert "garantiert" in LLM_KEYWORDS_HYPE_TOKENS
+    assert "ultimativ" in LLM_KEYWORDS_HYPE_TOKENS
+
+
+def test_extract_filters_hype_phrases():
+    def completer(system: str, user: str) -> dict:
+        return {"keywords": ["garantiert mehr umsatz", "liquiditaet planen mittelstand"]}
+
+    result = extract_kdp_keywords_via_llm(_project(), ["Kap 1"], completer)
+    assert result == ["liquiditaet planen mittelstand"]
+
+
+def test_hype_phrase_never_reaches_kdp_slots():
+    keywords = build_kdp_keywords(
+        _project(),
+        llm_phrases=list(
+            extract_kdp_keywords_via_llm(
+                _project(),
+                ["Kap 1"],
+                lambda s, u: {"keywords": ["ultimativer ratgeber finanzen"]},
+            )
+        ),
+    )
+    assert all(k.source != KDP_KEYWORD_SOURCE_LLM for k in keywords)
+    assert all("ultimativ" not in k.text for k in keywords)

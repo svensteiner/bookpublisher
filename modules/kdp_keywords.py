@@ -28,6 +28,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
 
+from modules.amazon_html import LLM_BULLETS_HYPE_TOKENS
 from modules.discovery import BookProject
 from modules.rewrites import (
     FALLBACK_AUDIENCES,
@@ -650,6 +651,77 @@ def build_kdp_keywords_user_prompt(
     )
 
 
+# Anti-hype quality gate for the LLM long-tail phrases. The deterministic
+# rule-check in :func:`_make_keyword` only rejects ``FORBIDDEN_TOKENS``
+# ("bestseller", "kostenlos", ...) plus length/title rules — it would let a
+# phrase like "garantiert mehr umsatz" through, because "garantiert" is a
+# Marketing-Hype lemma, not a forbidden head term. We reuse the single
+# source of truth from the Amazon-bullet pass so both LLM passes reject the
+# same hype vocabulary and never disagree.
+LLM_KEYWORDS_HYPE_TOKENS: tuple[str, ...] = LLM_BULLETS_HYPE_TOKENS
+
+# Word-boundary regex, longest token first so "must have" wins over "must".
+# Matches case-insensitively against the RAW phrase (before normalization)
+# so it also catches the umlaut spellings ("revolutionär") which live in the
+# shared token list next to their ae/oe/ue folds.
+_LLM_KEYWORDS_HYPE_RE = re.compile(
+    r"\b(?:"
+    + "|".join(
+        re.escape(token)
+        for token in sorted(LLM_KEYWORDS_HYPE_TOKENS, key=len, reverse=True)
+    )
+    + r")",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class KeywordQualityResult:
+    """Outcome of the LLM long-tail anti-hype sanity check.
+
+    ``accepted`` carries the phrases that passed the per-phrase filters
+    (no Marketing-Hype lemma, no exclamation mark). ``rejected`` carries
+    ``(phrase, reason)`` pairs for traceability/logging. Unlike the
+    Amazon-bullet gate there is no aggregate ``passed`` flag: bad phrases
+    are simply dropped and the deterministic subject/audience pipelines
+    fill the remaining KDP slots — the author always gets 7 usable slots.
+    """
+
+    accepted: tuple[str, ...]
+    rejected: tuple[tuple[str, str], ...]
+
+
+def validate_llm_keywords(phrases: Sequence[str]) -> KeywordQualityResult:
+    """Drop hype-y or exclamation-laden LLM keyword phrases.
+
+    Pure function. Mirrors :func:`modules.amazon_html.validate_llm_bullets`
+    so both LLM passes share one anti-hype contract. Non-string and
+    whitespace-only items are skipped; ``!`` and any hype lemma reject the
+    phrase. Surviving phrases are returned trimmed and in input order — the
+    downstream KDP rule-check (char limit, forbidden tokens, title repeat,
+    dedupe) still runs in :func:`_make_keyword`.
+    """
+
+    accepted: list[str] = []
+    rejected: list[tuple[str, str]] = []
+    for raw in phrases:
+        if not isinstance(raw, str):
+            rejected.append((str(raw), "non_string"))
+            continue
+        phrase = raw.strip()
+        if not phrase:
+            continue
+        if "!" in phrase:
+            rejected.append((phrase, "contains_exclamation"))
+            continue
+        hype_match = _LLM_KEYWORDS_HYPE_RE.search(phrase)
+        if hype_match is not None:
+            rejected.append((phrase, f"contains_hype:{hype_match.group(0).lower()}"))
+            continue
+        accepted.append(phrase)
+    return KeywordQualityResult(accepted=tuple(accepted), rejected=tuple(rejected))
+
+
 def _parse_llm_keywords_payload(payload: Any) -> list[str]:
     """Extract keyword phrase strings from the LLM JSON response.
 
@@ -684,6 +756,10 @@ def extract_kdp_keywords_via_llm(
     exception (network, API key, malformed JSON) is swallowed and turned
     into an empty list so the caller can fall back to the deterministic
     template path without aborting the pipeline.
+
+    Surviving phrases pass through :func:`validate_llm_keywords` so a model
+    that ignores the no-hype instruction ("garantiert mehr umsatz") never
+    reaches the author's KDP backend.
     """
 
     user_prompt = build_kdp_keywords_user_prompt(project, chapter_titles)
@@ -691,4 +767,5 @@ def extract_kdp_keywords_via_llm(
         payload = llm_completer(LLM_KEYWORDS_SYSTEM_PROMPT, user_prompt)
     except Exception:
         return []
-    return _parse_llm_keywords_payload(payload)
+    phrases = _parse_llm_keywords_payload(payload)
+    return list(validate_llm_keywords(phrases).accepted)
