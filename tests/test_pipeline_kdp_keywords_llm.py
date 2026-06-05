@@ -125,3 +125,23 @@ def test_returns_none_when_llm_returns_empty():
     )
 
     assert result is None
+
+
+def test_chapter_intros_are_forwarded_to_prompt():
+    # When the manuscript yields chapter intros, they must reach the LLM
+    # user prompt so the long-tail phrases are grounded in real prose.
+    llm = _StubLLM(api_key="sk-ant-fake", response={"keywords": ["liquiditaet planen"]})
+    pipeline = _build_pipeline(llm_enabled=True, llm=llm)
+    pipeline._collect_chapter_intros = lambda project: [  # type: ignore[assignment]
+        ("Kap 1", "Cashflow steuern statt Bauchgefuehl entscheiden.")
+    ]
+
+    result = pipeline._maybe_extract_kdp_llm_keywords(
+        _project(), chapter_titles=["Kap 1"]
+    )
+
+    assert result == ["liquiditaet planen"]
+    assert len(llm.calls) == 1
+    _, user_prompt = llm.calls[0]
+    assert "Kapitel-Eroeffnungen" in user_prompt
+    assert "Cashflow steuern statt Bauchgefuehl entscheiden." in user_prompt

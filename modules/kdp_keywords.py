@@ -63,6 +63,12 @@ LLM_KEYWORDS_MAX_CHAPTER_TITLES: int = 20
 # by the deterministic subject pipeline.
 LLM_KEYWORDS_MIN_WORDS: int = 2
 
+# Maximum number of chapter openings forwarded to the LLM long-tail pass.
+# Mirrors ``modules.amazon_html.LLM_BULLETS_MAX_CHAPTER_INTROS`` so the prompt
+# stays bounded even on books with many chapters. The intros ground the
+# phrases in the actual manuscript prose, not only title/subtitle/TOC.
+LLM_KEYWORDS_MAX_CHAPTER_INTROS: int = 12
+
 FORMAT_MODIFIERS: tuple[str, ...] = (
     "ratgeber",
     "buch",
@@ -620,14 +626,46 @@ LLM_KEYWORDS_SYSTEM_PROMPT: str = (
 )
 
 
+def _render_chapter_intros_block(
+    chapter_intros: Sequence[tuple[str, str]],
+) -> str:
+    """Render the optional chapter-intros block for the LLM keyword prompt.
+
+    Empty / whitespace-only intros are silently skipped so the LLM never
+    sees a dangling ``"- Kapitel 3: "`` line. The block is capped via
+    ``LLM_KEYWORDS_MAX_CHAPTER_INTROS`` so prompt size stays bounded.
+    Returns an empty string when no usable intro survives the filter.
+    """
+
+    lines: list[str] = []
+    for title, intro in chapter_intros:
+        if len(lines) >= LLM_KEYWORDS_MAX_CHAPTER_INTROS:
+            break
+        clean_title = (title or "").strip()
+        clean_intro = (intro or "").strip()
+        if not clean_intro:
+            continue
+        head = clean_title or "(ohne Titel)"
+        lines.append(f"- {head}: {clean_intro}")
+    return "\n".join(lines)
+
+
 def build_kdp_keywords_user_prompt(
     project: BookProject,
     chapter_titles: Sequence[str],
+    *,
+    chapter_intros: Sequence[tuple[str, str]] | None = None,
 ) -> str:
     """Render the user prompt for the LLM long-tail keyword extractor.
 
     Chapter titles are capped via ``LLM_KEYWORDS_MAX_CHAPTER_TITLES`` so the
-    prompt stays bounded even on books with many chapters.
+    prompt stays bounded even on books with many chapters. When
+    ``chapter_intros`` is provided, an additional "Kapitel-Eroeffnungen"
+    block is appended so the model mines real search intents from the
+    manuscript prose instead of only the title/subtitle/TOC. Empty or
+    whitespace-only intros are silently filtered, and with
+    ``chapter_intros=None`` the prompt is byte-identical to the title-only
+    form, so the title-only callers stay unaffected.
     """
 
     title = (project.title or "").strip() or "(kein Titel)"
@@ -640,13 +678,22 @@ def build_kdp_keywords_user_prompt(
         chapter_block = "\n".join(f"- {c}" for c in chapters_capped)
     else:
         chapter_block = "(keine Kapitel-Titel verfuegbar)"
+    intro_section = ""
+    if chapter_intros:
+        intros_block = _render_chapter_intros_block(chapter_intros)
+        if intros_block:
+            intro_section = (
+                "\n\nKapitel-Eroeffnungen (jeweils erster Absatz, gekuerzt):\n"
+                f"{intros_block}"
+            )
     return (
         f"Titel: {title}\n"
         f"Untertitel: {subtitle}\n\n"
         "Amazon-Beschreibung:\n"
         f"{description}\n\n"
         "Kapitel-Titel:\n"
-        f"{chapter_block}\n\n"
+        f"{chapter_block}"
+        f"{intro_section}\n\n"
         "Liefere bis zu 7 Long-Tail-Suchphrasen im geforderten JSON-Format."
     )
 
@@ -748,6 +795,8 @@ def extract_kdp_keywords_via_llm(
     project: BookProject,
     chapter_titles: Sequence[str],
     llm_completer: Callable[[str, str], dict[str, Any]],
+    *,
+    chapter_intros: Sequence[tuple[str, str]] | None = None,
 ) -> list[str]:
     """Call the LLM to extract book-specific long-tail keyword phrases.
 
@@ -755,14 +804,18 @@ def extract_kdp_keywords_via_llm(
     — take a system+user prompt pair and return a parsed JSON dict. Any
     exception (network, API key, malformed JSON) is swallowed and turned
     into an empty list so the caller can fall back to the deterministic
-    template path without aborting the pipeline.
+    template path without aborting the pipeline. ``chapter_intros`` is
+    forwarded to :func:`build_kdp_keywords_user_prompt` so the model grounds
+    its phrases in the manuscript prose, not only the TOC.
 
     Surviving phrases pass through :func:`validate_llm_keywords` so a model
     that ignores the no-hype instruction ("garantiert mehr umsatz") never
     reaches the author's KDP backend.
     """
 
-    user_prompt = build_kdp_keywords_user_prompt(project, chapter_titles)
+    user_prompt = build_kdp_keywords_user_prompt(
+        project, chapter_titles, chapter_intros=chapter_intros
+    )
     try:
         payload = llm_completer(LLM_KEYWORDS_SYSTEM_PROMPT, user_prompt)
     except Exception:

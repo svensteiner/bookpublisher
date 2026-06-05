@@ -17,6 +17,7 @@ from modules.kdp_keywords import (
     KDP_KEYWORD_SOURCE_LLM,
     KeywordQualityResult,
     LLM_KEYWORDS_HYPE_TOKENS,
+    LLM_KEYWORDS_MAX_CHAPTER_INTROS,
     LLM_KEYWORDS_MAX_CHAPTER_TITLES,
     LLM_KEYWORDS_MAX_SLOTS,
     LLM_KEYWORDS_MIN_WORDS,
@@ -109,6 +110,70 @@ def test_user_prompt_skips_empty_chapter_titles():
     assert "- \n" not in prompt
 
 
+def test_user_prompt_without_intros_is_unchanged():
+    # chapter_intros=None must keep the prompt byte-identical to the
+    # title-only form so existing callers stay unaffected.
+    titles = ["Liquiditaet steuern", "Monatsabschluss"]
+    base = build_kdp_keywords_user_prompt(_project(), titles)
+    with_none = build_kdp_keywords_user_prompt(_project(), titles, chapter_intros=None)
+    assert base == with_none
+    assert "Kapitel-Eroeffnungen" not in base
+
+
+def test_user_prompt_appends_chapter_intros_block():
+    prompt = build_kdp_keywords_user_prompt(
+        _project(),
+        ["Liquiditaet steuern"],
+        chapter_intros=[
+            ("Liquiditaet steuern", "Cashflow ist die wichtigste Kennzahl im Mittelstand."),
+            ("Monatsabschluss", "Ein sauberer Abschluss spart Beratungskosten."),
+        ],
+    )
+    assert "Kapitel-Eroeffnungen" in prompt
+    assert "Cashflow ist die wichtigste Kennzahl" in prompt
+    assert "Ein sauberer Abschluss spart" in prompt
+
+
+def test_user_prompt_skips_empty_chapter_intros():
+    prompt = build_kdp_keywords_user_prompt(
+        _project(),
+        ["Kapitel A"],
+        chapter_intros=[("Kapitel A", "   "), ("Kapitel B", "Echte Eroeffnung hier.")],
+    )
+    assert "Echte Eroeffnung hier." in prompt
+    # No dangling header line for the whitespace-only intro.
+    assert "- Kapitel A: \n" not in prompt
+    assert "- Kapitel A:  \n" not in prompt
+
+
+def test_user_prompt_with_only_empty_intros_omits_block():
+    prompt = build_kdp_keywords_user_prompt(
+        _project(),
+        ["Kapitel A"],
+        chapter_intros=[("Kapitel A", ""), ("Kapitel B", "   ")],
+    )
+    assert "Kapitel-Eroeffnungen" not in prompt
+
+
+def test_user_prompt_caps_chapter_intros():
+    intros = [
+        (f"Kapitel {i}", f"Eroeffnung nummer {i} mit echtem Inhalt.")
+        for i in range(LLM_KEYWORDS_MAX_CHAPTER_INTROS + 5)
+    ]
+    prompt = build_kdp_keywords_user_prompt(_project(), [], chapter_intros=intros)
+    assert f"Eroeffnung nummer {LLM_KEYWORDS_MAX_CHAPTER_INTROS - 1} " in prompt
+    assert f"Eroeffnung nummer {LLM_KEYWORDS_MAX_CHAPTER_INTROS + 2} " not in prompt
+
+
+def test_user_prompt_uses_placeholder_for_untitled_intro():
+    prompt = build_kdp_keywords_user_prompt(
+        _project(),
+        [],
+        chapter_intros=[("", "Eroeffnung ohne Kapiteltitel.")],
+    )
+    assert "(ohne Titel): Eroeffnung ohne Kapiteltitel." in prompt
+
+
 # --- extract_kdp_keywords_via_llm ----------------------------------------
 
 
@@ -122,6 +187,25 @@ def test_extract_returns_parsed_phrases():
     result = extract_kdp_keywords_via_llm(_project(), ["Kap 1"], completer)
     assert result == ["liquiditaet mittelstand", "cfo monatsabschluss"]
     assert len(calls) == 1
+
+
+def test_extract_forwards_chapter_intros_to_prompt():
+    calls: list[tuple[str, str]] = []
+
+    def completer(system: str, user: str) -> dict:
+        calls.append((system, user))
+        return {"keywords": ["liquiditaet mittelstand"]}
+
+    extract_kdp_keywords_via_llm(
+        _project(),
+        ["Kap 1"],
+        completer,
+        chapter_intros=[("Kap 1", "Cashflow steuern statt Bauchgefuehl.")],
+    )
+    assert len(calls) == 1
+    _, user_prompt = calls[0]
+    assert "Kapitel-Eroeffnungen" in user_prompt
+    assert "Cashflow steuern statt Bauchgefuehl." in user_prompt
 
 
 def test_extract_swallows_exceptions():

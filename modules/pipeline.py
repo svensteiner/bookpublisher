@@ -1282,9 +1282,13 @@ class PublisherPipeline:
                 reason="missing_api_key",
             )
             return None
+        chapter_intros = self._collect_chapter_intros(project)
         try:
             phrases = extract_kdp_keywords_via_llm(
-                project, chapter_titles, self.llm.complete_json
+                project,
+                chapter_titles,
+                self.llm.complete_json,
+                chapter_intros=chapter_intros or None,
             )
         except Exception as exc:
             self.logger.log(
@@ -1297,6 +1301,7 @@ class PublisherPipeline:
             "kdp_keywords_llm_completed",
             project_id=project.project_id,
             phrase_count=len(phrases),
+            intro_count=sum(1 for _, intro in chapter_intros if intro),
         )
         return phrases or None
 
