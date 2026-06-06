@@ -25,6 +25,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 from modules.discovery import BookProject
 from modules.rewrites import (
+    REWRITE_HYPE_TOKENS,
     FALLBACK_AUDIENCES,
     _extract_audience,
     _extract_subject,
@@ -75,34 +76,11 @@ LLM_BULLETS_MIN_NUMBER_HITS: int = 1
 # Tokens that signal Marketing-Hype — KDP-Sachbuch-Bestseller verzichten
 # bewusst auf diese Wörter. Matched case-insensitively on word boundaries
 # (so "fantastische" matches "fantastisch" only via the lemma prefix).
-LLM_BULLETS_HYPE_TOKENS: tuple[str, ...] = (
-    "ultimativ",
-    "unglaublich",
-    "perfekt",
-    "garantiert",
-    "revolutionaer",
-    "revolutionär",
-    "weltbeste",
-    "weltklasse",
-    "einzigartig",
-    "exklusiv",
-    "sensationell",
-    "fantastisch",
-    "wunderbar",
-    "magisch",
-    "geheim",
-    "bestseller",
-    "phaenomenal",
-    "phänomenal",
-    "atemberaubend",
-    "lebensveraendernd",
-    "lebensverändernd",
-    "must-have",
-    "must have",
-    "no-brainer",
-    "game-changer",
-    "gamechanger",
-)
+# Anti-hype vocabulary. Aliased from modules.rewrites (the lowest-level
+# metadata module) so the list lives in exactly one place — amazon_html,
+# kdp_keywords and rewrites all share the same tokens without duplication
+# and without a circular import.
+LLM_BULLETS_HYPE_TOKENS: tuple[str, ...] = REWRITE_HYPE_TOKENS
 
 _BULLET_MARKERS: tuple[str, ...] = ("- ", "* ", "• ", "‣ ", "– ", "— ")
 _SECTION_HEADINGS: dict[str, str] = {

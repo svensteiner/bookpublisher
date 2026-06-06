@@ -17,18 +17,25 @@ from modules.rewrites import (
     DESCRIPTION_LEAD_MAX_CHARS,
     LLM_VARIANTS_DEFAULT_MOTIVATION,
     LLM_VARIANTS_PER_FIELD,
+    REWRITE_HYPE_TOKENS,
+    REWRITE_REJECT_DUPLICATE_OPENING,
+    REWRITE_REJECT_EMPTY,
+    REWRITE_REJECT_HYPE,
+    REWRITE_REJECT_NO_ANCHOR,
     REWRITE_SOURCE_LLM,
     REWRITE_SOURCE_TEMPLATE,
     REWRITE_SOURCES,
     RewriteBundle,
     RewriteOption,
     RewriteReport,
+    RewriteVariantQualityResult,
     TITLE_MAX_CHARS,
     TITLE_MIN_CHARS,
     apply_rewrite_variants,
     build_rewrite_report,
     build_rewrite_variants_user_prompt,
     extract_rewrite_variants_via_llm,
+    validate_rewrite_variants,
     _parse_rewrite_variants_payload,
 )
 
@@ -312,3 +319,116 @@ def test_render_template_only_has_no_llm_marker():
     report = build_rewrite_report(project)
     md = render_rewrite_report_markdown(project, report)
     assert "Quelle: LLM-Pass" not in md
+
+
+# --- validate_rewrite_variants (quality gate) -----------------------------
+
+
+def _gate_report() -> RewriteReport:
+    """Report with two anchors and a known title original for gate tests."""
+
+    bundle = RewriteBundle(
+        field="title",
+        original="Vertrieb mit Methode",
+        diagnosis=["Titel ist sehr kurz"],
+        options=[],
+    )
+    return RewriteReport(anchors=["methode", "vertrieb"], bundles=[bundle])
+
+
+def test_validate_keeps_clean_variant_and_preserves_order():
+    report = _gate_report()
+    variants = {
+        "title": [
+            ("Vertrieb endlich mit klarer Methode steuern", "m1"),
+            ("Methode statt Bauchgefuehl im Vertrieb", "m2"),
+        ]
+    }
+    result = validate_rewrite_variants(variants, report)
+    assert isinstance(result, RewriteVariantQualityResult)
+    assert result.accepted["title"] == variants["title"]
+    assert result.rejected == ()
+
+
+def test_validate_drops_hype_variant():
+    report = _gate_report()
+    variants = {"title": [("Die ultimative Methode fuer Vertrieb", "m")]}
+    result = validate_rewrite_variants(variants, report)
+    assert "title" not in result.accepted
+    assert result.rejected[0][0] == "title"
+    assert result.rejected[0][2].startswith(REWRITE_REJECT_HYPE)
+
+
+def test_validate_drops_variant_without_any_anchor():
+    report = _gate_report()
+    variants = {"title": [("Ein voellig anderer Ratgeber ohne Bezug", "m")]}
+    result = validate_rewrite_variants(variants, report)
+    assert "title" not in result.accepted
+    assert result.rejected[0][2] == REWRITE_REJECT_NO_ANCHOR
+
+
+def test_validate_drops_duplicate_opening_variant():
+    report = _gate_report()
+    # First sentence equals the original first sentence → no real rewrite.
+    variants = {"title": [("Vertrieb mit Methode.", "m")]}
+    result = validate_rewrite_variants(variants, report)
+    assert "title" not in result.accepted
+    assert result.rejected[0][2] == REWRITE_REJECT_DUPLICATE_OPENING
+
+
+def test_validate_skips_anchor_check_when_no_anchors():
+    report = RewriteReport(
+        anchors=[],
+        bundles=[RewriteBundle(field="title", original="Kurz", diagnosis=["x"], options=[])],
+    )
+    variants = {"title": [("Ein ganz neuer Titel ohne Anker", "m")]}
+    result = validate_rewrite_variants(variants, report)
+    assert result.accepted["title"] == variants["title"]
+
+
+def test_validate_rejects_empty_and_non_string_text():
+    report = _gate_report()
+    variants = {"title": [("   ", "m"), (123, "m")]}  # type: ignore[list-item]
+    result = validate_rewrite_variants(variants, report)
+    assert "title" not in result.accepted
+    assert {reason for _, _, reason in result.rejected} == {REWRITE_REJECT_EMPTY}
+
+
+def test_validate_hype_check_runs_before_anchor_check():
+    # Variant has hype AND lacks anchors — must be reported as hype, since
+    # the hype gate runs first.
+    report = _gate_report()
+    variants = {"title": [("Das garantiert beste Buch ueberhaupt", "m")]}
+    result = validate_rewrite_variants(variants, report)
+    assert result.rejected[0][2].startswith(REWRITE_REJECT_HYPE)
+
+
+def test_validate_does_not_mutate_input_report():
+    report = _gate_report()
+    before = report.to_json()
+    validate_rewrite_variants({"title": [("Methode fuer besseren Vertrieb heute", "m")]}, report)
+    assert report.to_json() == before
+
+
+def test_hype_token_list_is_normalized_and_nonempty():
+    assert REWRITE_HYPE_TOKENS
+    for token in REWRITE_HYPE_TOKENS:
+        assert token == token.lower()
+        assert token.strip() == token
+
+
+def test_amazon_html_hype_tokens_alias_rewrites_single_source():
+    from modules.amazon_html import LLM_BULLETS_HYPE_TOKENS
+
+    assert LLM_BULLETS_HYPE_TOKENS is REWRITE_HYPE_TOKENS
+
+
+def test_extract_applies_quality_gate_dropping_hype():
+    report = build_rewrite_report(_project())
+
+    def completer(system: str, user: str) -> dict:
+        # "Solid" anchor present but "ultimative" is hype → must be dropped.
+        return {"variants": [{"field": "title", "text": "Die ultimative Solid-Methode fuer alle"}]}
+
+    result = extract_rewrite_variants_via_llm(report, completer)
+    assert result == {}

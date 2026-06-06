@@ -71,6 +71,41 @@ FALLBACK_AUDIENCES: tuple[str, ...] = (
     "Operatoren",
 )
 
+# Canonical anti-hype vocabulary. Defined here in the lowest-level metadata
+# module so amazon_html (which imports from this module) can alias it as
+# ``LLM_BULLETS_HYPE_TOKENS`` and kdp_keywords can reuse it transitively —
+# one single source of truth, no circular import. Each entry is lowercase
+# and carries both the ASCII-folded and umlaut spelling where relevant so a
+# raw, un-normalised LLM string is still caught.
+REWRITE_HYPE_TOKENS: tuple[str, ...] = (
+    "ultimativ",
+    "unglaublich",
+    "perfekt",
+    "garantiert",
+    "revolutionaer",
+    "revolutionär",
+    "weltbeste",
+    "weltklasse",
+    "einzigartig",
+    "exklusiv",
+    "sensationell",
+    "fantastisch",
+    "wunderbar",
+    "magisch",
+    "geheim",
+    "bestseller",
+    "phaenomenal",
+    "phänomenal",
+    "atemberaubend",
+    "lebensveraendernd",
+    "lebensverändernd",
+    "must-have",
+    "must have",
+    "no-brainer",
+    "game-changer",
+    "gamechanger",
+)
+
 # Provenance labels for a rewrite option. ``template`` is the default
 # (deterministic bestseller-pattern variant); ``llm`` marks a variant the
 # optional LLM-Pass produced by rewriting the author's own original.
@@ -659,7 +694,8 @@ def extract_rewrite_variants_via_llm(
         payload = llm_completer(LLM_VARIANTS_SYSTEM_PROMPT, user_prompt)
     except Exception:
         return {}
-    return _parse_rewrite_variants_payload(payload)
+    parsed = _parse_rewrite_variants_payload(payload)
+    return validate_rewrite_variants(parsed, report).accepted
 
 
 def apply_rewrite_variants(
@@ -713,3 +749,98 @@ def apply_rewrite_variants(
     if not any_change:
         return report
     return replace(report, bundles=new_bundles)
+
+
+# --- Quality gate for LLM rewrite variants --------------------------------
+#
+# ``_parse_rewrite_variants_payload`` only filters exclamation marks and raw
+# length. This gate adds the three semantic checks the author actually cares
+# about before a generated variant is allowed into the report:
+#   1. anti-hype: no token from ``REWRITE_HYPE_TOKENS`` (single source of
+#      truth shared with amazon_html / kdp_keywords);
+#   2. anchor retention: when the project exposes anchor keywords, the variant
+#      must keep at least one — a rewrite that drops the whole discoverability
+#      surface is worse than the original;
+#   3. no duplicate opening: the variant's first sentence must differ from the
+#      original's first sentence, otherwise the "rewrite" did no real work.
+# A variant that trips any rule is dropped (not repaired) so the template
+# options remain the fallback.
+
+# Word-boundary hype matcher built from the shared token list. Longest tokens
+# first so "must have" wins over "must". Runs on the raw variant text so both
+# the ASCII-folded and umlaut spellings are caught.
+_REWRITE_HYPE_RE = re.compile(
+    r"\b(?:"
+    + "|".join(
+        re.escape(token)
+        for token in sorted(REWRITE_HYPE_TOKENS, key=len, reverse=True)
+    )
+    + r")",
+    re.IGNORECASE,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"[.!?]")
+_COMPARE_NONWORD_RE = re.compile(r"[^\wÄÖÜäöüß]+", re.UNICODE)
+
+# Rejection reason labels (stable strings for tests / future logging).
+REWRITE_REJECT_HYPE: str = "contains_hype"
+REWRITE_REJECT_NO_ANCHOR: str = "no_anchor_keyword"
+REWRITE_REJECT_DUPLICATE_OPENING: str = "duplicate_opening"
+REWRITE_REJECT_EMPTY: str = "empty_text"
+
+
+@dataclass(frozen=True)
+class RewriteVariantQualityResult:
+    """Outcome of the LLM rewrite-variant quality gate.
+
+    ``accepted`` maps each field to the variants that survived all three
+    checks (same shape as ``_parse_rewrite_variants_payload`` so the caller
+    can pass it straight to ``apply_rewrite_variants``). ``rejected`` lists
+    ``(field, text, reason)`` triples for traceability and testing.
+    """
+
+    accepted: dict[str, list[tuple[str, str]]]
+    rejected: tuple[tuple[str, str, str], ...]
+
+
+def _opening_key(text: str) -> str:
+    """Normalised first sentence used for the duplicate-opening check."""
+
+    first = _SENTENCE_SPLIT_RE.split(text, maxsplit=1)[0]
+    return _COMPARE_NONWORD_RE.sub(" ", first.lower()).strip()
+
+
+def validate_rewrite_variants(
+    variants: Mapping[str, Sequence[tuple[str, str]]],
+    report: RewriteReport,
+) -> RewriteVariantQualityResult:
+    """Drop hype, anchor-less, or original-echoing LLM rewrite variants.
+
+    Pure function. ``report`` supplies the anchor keywords and per-field
+    original text the checks need. Returns a ``RewriteVariantQualityResult``;
+    the caller uses ``.accepted`` and may inspect ``.rejected`` for logging.
+    """
+
+    anchors = [anchor.lower() for anchor in report.anchors if anchor]
+    originals = {bundle.field: bundle.original for bundle in report.bundles}
+    accepted: dict[str, list[tuple[str, str]]] = {}
+    rejected: list[tuple[str, str, str]] = []
+    for field_key, items in variants.items():
+        original_key = _opening_key(originals.get(field_key, "") or "")
+        for text, motivation in items:
+            if not isinstance(text, str) or not text.strip():
+                rejected.append((field_key, str(text), REWRITE_REJECT_EMPTY))
+                continue
+            hype = _REWRITE_HYPE_RE.search(text)
+            if hype is not None:
+                rejected.append(
+                    (field_key, text, f"{REWRITE_REJECT_HYPE}:{hype.group(0).lower()}")
+                )
+                continue
+            if anchors and not any(anchor in text.lower() for anchor in anchors):
+                rejected.append((field_key, text, REWRITE_REJECT_NO_ANCHOR))
+                continue
+            if original_key and _opening_key(text) == original_key:
+                rejected.append((field_key, text, REWRITE_REJECT_DUPLICATE_OPENING))
+                continue
+            accepted.setdefault(field_key, []).append((text, motivation))
+    return RewriteVariantQualityResult(accepted=accepted, rejected=tuple(rejected))
