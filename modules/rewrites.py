@@ -546,6 +546,11 @@ LLM_VARIANTS_SYSTEM_PROMPT: str = (
 
 # How many LLM variants to keep per field (cost + report-length cap).
 LLM_VARIANTS_PER_FIELD: int = 2
+# How many chapter openings to feed into the rewrite prompt (cost + prompt
+# bound). Mirrors ``kdp_keywords.LLM_KEYWORDS_MAX_CHAPTER_INTROS`` but a touch
+# smaller — the rewrite pass only needs a feel for the book's voice, not full
+# topical coverage.
+LLM_VARIANTS_MAX_CHAPTER_INTROS: int = 8
 # Default buyer motivation when the LLM omits one for a variant.
 LLM_VARIANTS_DEFAULT_MOTIVATION: str = (
     "Buyer-Click: LLM-Variante direkt aus deinem Original umgeschrieben — "
@@ -577,12 +582,45 @@ def _bundles_needing_rewrite(report: RewriteReport) -> list[RewriteBundle]:
     return [bundle for bundle in report.bundles if bundle.diagnosis]
 
 
-def build_rewrite_variants_user_prompt(report: RewriteReport) -> str:
+def _render_rewrite_chapter_intros_block(
+    chapter_intros: Sequence[tuple[str, str]],
+) -> str:
+    """Render the optional chapter-intros block for the rewrite prompt.
+
+    Empty / whitespace-only intros are silently skipped so the LLM never
+    sees a dangling ``"- Kapitel 3: "`` line. The block is capped via
+    ``LLM_VARIANTS_MAX_CHAPTER_INTROS`` so prompt size stays bounded.
+    Returns an empty string when no usable intro survives the filter.
+    """
+
+    lines: list[str] = []
+    for title, intro in chapter_intros:
+        if len(lines) >= LLM_VARIANTS_MAX_CHAPTER_INTROS:
+            break
+        clean_title = (title or "").strip()
+        clean_intro = (intro or "").strip()
+        if not clean_intro:
+            continue
+        head = clean_title or "(ohne Titel)"
+        lines.append(f"- {head}: {clean_intro}")
+    return "\n".join(lines)
+
+
+def build_rewrite_variants_user_prompt(
+    report: RewriteReport,
+    *,
+    chapter_intros: Sequence[tuple[str, str]] | None = None,
+) -> str:
     """Render the user prompt for the LLM rewrite-variant generator.
 
     Only fields with a diagnosis are listed, each carrying the original
     text, the diagnosis findings and the hard character limit so the LLM
-    grounds its rewrite in the real metadata. Returns an empty string when
+    grounds its rewrite in the real metadata. When ``chapter_intros`` is
+    provided, an additional "Kapitel-Eroeffnungen" block is appended so the
+    model can echo the book's real voice instead of only the metadata.
+    Empty or whitespace-only intros are silently filtered, and with
+    ``chapter_intros=None`` the prompt is byte-identical to the metadata-only
+    form so existing callers stay unaffected. Returns an empty string when
     no field needs a rewrite — the caller short-circuits and never makes
     the LLM call.
     """
@@ -609,12 +647,22 @@ def build_rewrite_variants_user_prompt(report: RewriteReport) -> str:
             block_lines.append("- Probleme: " + "; ".join(bundle.diagnosis))
         blocks.append("\n".join(block_lines))
     body_block = "\n\n".join(blocks)
+    intro_section = ""
+    if chapter_intros:
+        intros_block = _render_rewrite_chapter_intros_block(chapter_intros)
+        if intros_block:
+            intro_section = (
+                "\n\nKapitel-Eroeffnungen (jeweils erster Absatz, gekuerzt) — "
+                "nutze sie, um Ton und Wortwahl des Buches zu treffen:\n"
+                f"{intros_block}"
+            )
     return (
         "Hier sind die Metadatenfelder mit Verbesserungsbedarf. Schreibe fuer "
         f"jedes Feld {LLM_VARIANTS_PER_FIELD} alternative Texte im geforderten "
         "JSON-Format. Behalte zentrale Begriffe bei.\n\n"
         f"Anker-Keywords: {anchor_line}\n\n"
         f"{body_block}"
+        f"{intro_section}"
     )
 
 
@@ -677,17 +725,23 @@ def _parse_rewrite_variants_payload(
 def extract_rewrite_variants_via_llm(
     report: RewriteReport,
     llm_completer: Callable[[str, str], dict[str, Any]],
+    *,
+    chapter_intros: Sequence[tuple[str, str]] | None = None,
 ) -> dict[str, list[tuple[str, str]]]:
     """Call the LLM to rewrite fields that need copy work.
 
     ``llm_completer`` behaves like ``LLMClient.complete_json`` — takes a
-    system+user prompt pair and returns a parsed JSON dict. Any exception
+    system+user prompt pair and returns a parsed JSON dict. When
+    ``chapter_intros`` is provided the chapter openings flow into the prompt
+    so the rewrites stay closer to the book's real voice. Any exception
     (network, API key, malformed JSON) is swallowed and turned into an empty
     mapping so the caller falls back to the deterministic template options
     without aborting the pipeline.
     """
 
-    user_prompt = build_rewrite_variants_user_prompt(report)
+    user_prompt = build_rewrite_variants_user_prompt(
+        report, chapter_intros=chapter_intros
+    )
     if not user_prompt:
         return {}
     try:

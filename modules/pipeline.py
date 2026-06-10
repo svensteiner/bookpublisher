@@ -1120,10 +1120,12 @@ class PublisherPipeline:
                 reason="no_weak_fields",
             )
             return report
+        chapter_intros = self._collect_chapter_intros(project)
         try:
             variants = extract_rewrite_variants_via_llm(
                 report,
                 self.llm.complete_json,
+                chapter_intros=chapter_intros or None,
             )
         except Exception as exc:
             self.logger.log(
@@ -1138,6 +1140,7 @@ class PublisherPipeline:
             project_id=project.project_id,
             field_count=len(variants),
             weak_field_count=len(weak),
+            intro_count=sum(1 for _, intro in chapter_intros if intro),
         )
         return apply_rewrite_variants(report, variants)
 

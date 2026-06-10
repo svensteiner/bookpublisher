@@ -195,3 +195,19 @@ def test_llm_returning_nothing_leaves_report_unchanged():
 
     assert result is report
     assert len(llm.calls) == 1
+
+
+def test_chapter_intros_reach_the_llm_user_prompt():
+    llm = _StubLLM(api_key="sk-ant-fake", response={"variants": []})
+    pipeline = _build_pipeline(llm_enabled=True, llm=llm)
+    pipeline._collect_chapter_intros = (  # type: ignore[method-assign]
+        lambda project: [("Kapitel 1", "Operative Praxis aus echten Projekten.")]
+    )
+    report = build_rewrite_report(_project())
+
+    pipeline._maybe_apply_rewrite_variants(_project(), report)
+
+    assert len(llm.calls) == 1
+    _system, user = llm.calls[0]
+    assert "Kapitel-Eroeffnungen" in user
+    assert "Operative Praxis aus echten Projekten." in user

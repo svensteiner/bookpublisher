@@ -16,6 +16,7 @@ from modules.discovery import BookProject
 from modules.rewrites import (
     DESCRIPTION_LEAD_MAX_CHARS,
     LLM_VARIANTS_DEFAULT_MOTIVATION,
+    LLM_VARIANTS_MAX_CHAPTER_INTROS,
     LLM_VARIANTS_PER_FIELD,
     REWRITE_HYPE_TOKENS,
     REWRITE_REJECT_DUPLICATE_OPENING,
@@ -120,6 +121,83 @@ def test_prompt_handles_blank_anchors_gracefully():
     report = RewriteReport(anchors=[], bundles=[bundle])
     prompt = build_rewrite_variants_user_prompt(report)
     assert "keine erkannt" in prompt
+
+
+# --- chapter-intros context in the rewrite prompt -------------------------
+
+
+def test_prompt_without_intros_is_byte_identical_to_none():
+    report = build_rewrite_report(_project())
+    base = build_rewrite_variants_user_prompt(report)
+    with_none = build_rewrite_variants_user_prompt(report, chapter_intros=None)
+    assert base == with_none
+
+
+def test_prompt_appends_chapter_intros_block():
+    report = build_rewrite_report(_project())
+    prompt = build_rewrite_variants_user_prompt(
+        report,
+        chapter_intros=[("Kapitel 1", "So fuehrst du dein Team durch eine Krise.")],
+    )
+    assert "Kapitel-Eroeffnungen" in prompt
+    assert "So fuehrst du dein Team durch eine Krise." in prompt
+    assert "- Kapitel 1:" in prompt
+
+
+def test_prompt_skips_empty_intros():
+    report = build_rewrite_report(_project())
+    prompt = build_rewrite_variants_user_prompt(
+        report,
+        chapter_intros=[("Kapitel 1", "   "), ("Kapitel 2", "Echter Inhalt hier.")],
+    )
+    assert "- Kapitel 1:" not in prompt
+    assert "- Kapitel 2: Echter Inhalt hier." in prompt
+
+
+def test_prompt_omits_block_when_all_intros_empty():
+    report = build_rewrite_report(_project())
+    prompt = build_rewrite_variants_user_prompt(
+        report,
+        chapter_intros=[("Kapitel 1", ""), ("Kapitel 2", "  ")],
+    )
+    assert "Kapitel-Eroeffnungen" not in prompt
+
+
+def test_prompt_caps_chapter_intros():
+    report = build_rewrite_report(_project())
+    intros = [
+        (f"Kapitel {i}", f"Inhalt von Kapitel {i}.")
+        for i in range(LLM_VARIANTS_MAX_CHAPTER_INTROS + 5)
+    ]
+    prompt = build_rewrite_variants_user_prompt(report, chapter_intros=intros)
+    rendered = sum(1 for line in prompt.splitlines() if line.startswith("- Kapitel"))
+    assert rendered == LLM_VARIANTS_MAX_CHAPTER_INTROS
+
+
+def test_prompt_defaults_missing_title_in_intro():
+    report = build_rewrite_report(_project())
+    prompt = build_rewrite_variants_user_prompt(
+        report,
+        chapter_intros=[("", "Inhalt ohne Titel.")],
+    )
+    assert "- (ohne Titel): Inhalt ohne Titel." in prompt
+
+
+def test_extract_forwards_chapter_intros_into_prompt():
+    report = build_rewrite_report(_project())
+    seen: dict[str, str] = {}
+
+    def completer(system: str, user: str) -> dict:
+        seen["user"] = user
+        return {"variants": []}
+
+    extract_rewrite_variants_via_llm(
+        report,
+        completer,
+        chapter_intros=[("Kapitel 1", "Operative Praxis aus echten Projekten.")],
+    )
+    assert "Kapitel-Eroeffnungen" in seen["user"]
+    assert "Operative Praxis aus echten Projekten." in seen["user"]
 
 
 # --- _parse_rewrite_variants_payload --------------------------------------
