@@ -463,13 +463,22 @@ def _bundle(
     }
 
 
-def _option(text: str, keyword_score: int, char_count: int | None = None) -> dict:
-    return {
+def _option(
+    text: str,
+    keyword_score: int,
+    char_count: int | None = None,
+    *,
+    source: str | None = None,
+) -> dict:
+    option = {
         "text": text,
         "char_count": char_count if char_count is not None else len(text),
         "keyword_score": keyword_score,
         "motivation": f"Motivation für {text[:20]}",
     }
+    if source is not None:
+        option["source"] = source
+    return option
 
 
 def test_top_rewrite_payload_returns_none_when_no_report():
@@ -588,6 +597,53 @@ def test_top_rewrite_payload_returns_immutable_safe_dict():
     assert top is not None
     top["text"] = "MUTATED"
     assert src_option["text"] == "Tit"
+
+
+def test_top_rewrite_payload_carries_llm_source():
+    """The provenance label must survive into the beginner_summary payload."""
+    payload = {
+        "bundles": [
+            _bundle(
+                "title",
+                diagnosis=["x"],
+                options=[_option("LLM-Titel", 80, source="llm")],
+            ),
+        ]
+    }
+    top = _top_rewrite_payload(payload)
+    assert top is not None
+    assert top["source"] == "llm"
+
+
+def test_top_rewrite_payload_carries_template_source():
+    payload = {
+        "bundles": [
+            _bundle(
+                "title",
+                diagnosis=["x"],
+                options=[_option("Template-Titel", 80, source="template")],
+            ),
+        ]
+    }
+    top = _top_rewrite_payload(payload)
+    assert top is not None
+    assert top["source"] == "template"
+
+
+def test_top_rewrite_payload_source_defaults_to_empty_when_absent():
+    """Options without a source key must not crash and carry an empty marker."""
+    payload = {
+        "bundles": [
+            _bundle(
+                "title",
+                diagnosis=["x"],
+                options=[_option("Titel-ohne-Quelle", 80)],
+            ),
+        ]
+    }
+    top = _top_rewrite_payload(payload)
+    assert top is not None
+    assert top["source"] == ""
 
 
 # ─── _round_delta_payload ─────────────────────────────────────────────

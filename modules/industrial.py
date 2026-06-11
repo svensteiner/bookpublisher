@@ -15,6 +15,7 @@ from modules.amazon_html import (
 from modules.cover import analyze_cover
 from modules.discovery import BookProject
 from modules.readers import read_any_text, read_text_file
+from modules.rewrites import REWRITE_SOURCE_LLM, REWRITE_SOURCE_TEMPLATE
 
 
 BULLETS_SOURCE_LABELS: dict[str, str] = {
@@ -546,6 +547,20 @@ REWRITE_FIELD_LABELS: dict[str, str] = {
     "description_lead": "Beschreibungs-Einstieg",
 }
 
+# Provenance labels for the Top-Rewrite-Pick marker line — mirrors the
+# ``BULLETS_SOURCE_LABELS`` convention so the author sees at a glance whether
+# the suggested copy is a manuscript-near LLM rewrite or a generic template
+# variant. Unknown/empty sources render no marker (``.get`` miss).
+REWRITE_SOURCE_LABELS: dict[str, str] = {
+    REWRITE_SOURCE_LLM: (
+        "Rewrite aus LLM-Pass (manuskript-nah umgeschrieben)"
+    ),
+    REWRITE_SOURCE_TEMPLATE: (
+        "Rewrite aus Template-Bibliothek (bewährtes Bestseller-Muster, "
+        "kein LLM-Pass aktiv)"
+    ),
+}
+
 
 def _render_top_chapter_balance(
     top_balance: dict[str, Any] | None,
@@ -686,6 +701,14 @@ def _render_top_rewrite(top_rewrite: dict[str, Any] | None) -> list[str]:
             f"kannst du direkt ins KDP-Backend kopieren ({field_label})."
         ),
         "",
+    ]
+    source_label = REWRITE_SOURCE_LABELS.get(
+        str(top_rewrite.get("source") or "").strip()
+    )
+    if source_label:
+        lines.append(f"_Quelle: {source_label}._")
+        lines.append("")
+    lines += [
         f"**{field_label}:**",
         "",
         f"> {text}",

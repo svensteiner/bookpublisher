@@ -168,6 +168,12 @@ def _top_rewrite_payload(rewrite_json: dict | None) -> dict | None:
                         "keyword_score": keyword_score,
                         "char_count": char_count,
                         "motivation": str(option.get("motivation") or ""),
+                        # Provenance carry-through: lets the beginner_summary
+                        # tell the author whether the top pick is a
+                        # manuscript-near LLM rewrite or a generic template
+                        # variant — same intent as the Amazon bullets_source
+                        # marker. Empty string when the source is unknown.
+                        "source": str(option.get("source") or "").strip(),
                     },
                 )
             )

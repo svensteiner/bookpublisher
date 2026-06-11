@@ -736,6 +736,82 @@ def test_render_beginner_summary_top_rewrite_handles_missing_motivation():
     assert "Warum:" not in summary
 
 
+def _rewrite_pick(source: str | None = None) -> dict:
+    pick = {
+        "field": "title",
+        "text": "Sachbuch: Was wirklich funktioniert",
+        "keyword_score": 67,
+        "char_count": 34,
+        "motivation": "Buyer-Click: Direkte Substanz-Versprechen-Formel.",
+    }
+    if source is not None:
+        pick["source"] = source
+    return pick
+
+
+def test_render_beginner_summary_top_rewrite_marks_llm_source():
+    """An LLM-derived top pick must announce its manuscript-near provenance.
+
+    The author needs to distinguish a rewrite the LLM tailored to the real
+    book voice from a generic bestseller-template variant — without opening
+    the rewrite_suggestions.json artifact.
+    """
+
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_rewrite=_rewrite_pick(source="llm"),
+    )
+    assert "Quelle:" in summary
+    assert "LLM-Pass" in summary
+    assert "manuskript-nah" in summary
+
+
+def test_render_beginner_summary_top_rewrite_marks_template_source():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_rewrite=_rewrite_pick(source="template"),
+    )
+    assert "Quelle:" in summary
+    assert "Template-Bibliothek" in summary
+    # The template label legitimately mentions "kein LLM-Pass aktiv" — assert
+    # the LLM-specific phrasing is absent so the two markers stay distinct.
+    assert "manuskript-nah" not in summary
+
+
+def test_render_beginner_summary_top_rewrite_no_marker_for_unknown_source():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_rewrite=_rewrite_pick(source="weird-value"),
+    )
+    assert "## Top-Rewrite-Pick" in summary
+    assert "Quelle:" not in summary
+
+
+def test_render_beginner_summary_top_rewrite_no_marker_when_source_empty():
+    result = build_industrial_qa(_project(manuscript=None, cover=None))
+    summary_empty = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_rewrite=_rewrite_pick(source=""),
+    )
+    assert "## Top-Rewrite-Pick" in summary_empty
+    assert "Quelle:" not in summary_empty
+    # Missing source key entirely must behave the same and not crash.
+    summary_missing = render_beginner_summary(
+        _project(manuscript=None, cover=None),
+        result,
+        top_rewrite=_rewrite_pick(source=None),
+    )
+    assert "## Top-Rewrite-Pick" in summary_missing
+    assert "Quelle:" not in summary_missing
+
+
 def test_render_beginner_summary_round_delta_highlight_section_present():
     result = build_industrial_qa(_project(manuscript=None, cover=None))
     highlight = {
